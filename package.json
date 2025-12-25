@@ -1,0 +1,26 @@
+{
+  "name": "dmcc-api",
+  "version": "1.0.0",
+  "description": "backend for dmcc",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mixx-22/dmcc-api.git"
+  },
+  "author": "Mike",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/mixx-22/dmcc-api/issues"
+  },
+  "homepage": "https://github.com/mixx-22/dmcc-api#readme",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "mongoose": "^9.0.2"
+  }
+}
