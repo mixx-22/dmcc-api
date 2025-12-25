@@ -13,5 +13,8 @@ app.use("/api/users", userRouter);
 
 app.use("/api/roles", roleRoutes);
 // route: http://localhost:4000/api/roles/register-role
+// route: http://localhost:4000/api/roles/get-role
+// route: http://localhost:4000/api/roles/get-role/:id
+// route: http://localhost:4000/api/roles/update-role/:id
 
 export default app;
