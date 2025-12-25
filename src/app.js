@@ -8,13 +8,11 @@ app.use(express.json());
 import userRouter from "./users/user.route.js";
 import roleRoutes from "./roles/role.route.js";
 
-app.use("/api/users", userRouter);
-// route: http://localhost:4000/api/users/register
+app.use("/users", userRouter);
+// route: http://localhost:4000/users
 
-app.use("/api/roles", roleRoutes);
-// route: http://localhost:4000/api/roles/register-role
-// route: http://localhost:4000/api/roles/get-role
-// route: http://localhost:4000/api/roles/get-role/:id
-// route: http://localhost:4000/api/roles/update-role/:id
+app.use("/roles", roleRoutes);
+// route: http://localhost:4000/roles
+// route: http://localhost:4000/roles/:id
 
 export default app;

@@ -9,6 +9,8 @@ const roleSchema = new Schema(
     // store arbitrary nested permission structures
     permissions: { type: Schema.Types.Mixed, default: {} },
 
+    isSystemRole: { type: Boolean, default: false },
+
     deletedAt: {
       type: Date,
       default: null,

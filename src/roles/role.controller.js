@@ -42,8 +42,32 @@ const postRole = async (req, res) => {
 
 const getAllRoles = async (req, res) => {
   try {
-    const roles = await Role.find({});
-    res.status(200).json({ roles });
+    // pagination
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const maxLimit = 100;
+    let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
+    if (limit > maxLimit) limit = maxLimit;
+
+    // keyword search (title OR description)
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+    const filter = { deletedAt: null };
+    if (keyword) {
+      const re = new RegExp(keyword, "i");
+      filter.$or = [{ title: re }, { description: re }];
+    }
+
+    const total = await Role.countDocuments(filter);
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    const data = await Role.find(filter)
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      data,
+      meta: { total, page, limit, totalPages },
+    });
   } catch (error) {
     res.status(500).json({
       message: "Server error.",
@@ -54,11 +78,11 @@ const getAllRoles = async (req, res) => {
 
 const getRole = async (req, res) => {
   try {
-    const role = await Role.findById(req.params.id);
-    if (!role) {
+    const data = await Role.findById(req.params.id);
+    if (!data) {
       return res.status(404).json({ message: "Role not found." });
     }
-    res.status(200).json({ role });
+    res.status(200).json({ data });
   } catch (error) {
     res.status(500).json({
       message: "Server error.",
@@ -89,8 +113,8 @@ const putRole = async (req, res) => {
       return res.status(400).json({ message: "No data provided for update." });
     }
 
-    const role = await Role.findById(req.params.id);
-    if (!role) {
+    const deleted = await Role.findById(req.params.id);
+    if (!deleted) {
       return res.status(404).json({ message: "Role not found." });
     }
 
@@ -105,21 +129,21 @@ const putRole = async (req, res) => {
     ) {
       // create a new merged object so Mongoose detects the change
       const merged = deepMerge(
-        JSON.parse(JSON.stringify(role.permissions ?? {})),
+        JSON.parse(JSON.stringify(deleted.permissions ?? {})),
         incomingPerms
       );
-      role.permissions = merged;
+      deleted.permissions = merged;
       // ensure mongoose treats this Mixed field as modified
-      role.markModified("permissions");
+      deleted.markModified("permissions");
     }
 
     // apply other updatable fields (exclude permission(s))
     const { permission, permissions, ...other } = req.body;
     Object.keys(other).forEach((k) => {
-      role[k] = other[k];
+      deleted[k] = other[k];
     });
 
-    const saved = await role.save();
+    const saved = await deleted.save();
 
     res.status(200).json({
       message: "Role updated successfully.",
@@ -133,4 +157,28 @@ const putRole = async (req, res) => {
   }
 };
 
-export { postRole, getAllRoles, getRole, putRole };
+const deleteRole = async (req, res) => {
+  try {
+    const updated = await Role.findByIdAndUpdate(
+      req.params.id,
+      { deletedAt: new Date() },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ message: "Role not found." });
+    }
+
+    res.status(200).json({
+      message: "Role soft-deleted successfully.",
+      role: updated,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Server error.",
+      error: error.message,
+    });
+  }
+};
+
+export { postRole, getAllRoles, getRole, putRole, deleteRole };

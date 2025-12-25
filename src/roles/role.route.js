@@ -4,12 +4,14 @@ import {
   getAllRoles,
   getRole,
   putRole,
+  deleteRole,
 } from "../roles/role.controller.js";
 const router = Router();
 
-router.route("/register-role").post(postRole);
-router.route("/get-role").get(getAllRoles);
-router.route("/get-role/:id").get(getRole);
-router.route("/update-role/:id").patch(putRole);
+router.route("").post(postRole);
+router.route("").get(getAllRoles);
+router.route("/:id").get(getRole);
+router.route("/:id").patch(putRole);
+router.route("/:id").delete(deleteRole);
 
 export default router;
