@@ -6,6 +6,11 @@ dotenv.config({
   path: "./.env",
 });
 
+if (!process.env.JWT_SECRET) {
+  console.error("Missing required env: JWT_SECRET");
+  process.exit(1);
+}
+
 const startServer = async () => {
   try {
     await connectDB();

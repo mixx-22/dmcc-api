@@ -1,4 +1,3 @@
-// ...existing code...
 import mongoose, { Schema } from "mongoose";
 
 const roleSchema = new Schema(
@@ -21,4 +20,3 @@ const roleSchema = new Schema(
 );
 
 export const Role = mongoose.model("Role", roleSchema);
-// ...existing code...
