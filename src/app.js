@@ -8,7 +8,7 @@ app.use(express.json());
 const defaultOrigins = [
   "http://localhost:3000",
   "http://localhost:4000",
-  "http://192.168.1.14:4000",
+  "http://192.168.1.3:4000",
 ];
 const allowedOrigins = (process.env.CLIENT_ORIGIN || defaultOrigins.join(","))
   .split(",")
@@ -52,9 +52,11 @@ app.use((req, res, next) => {
   next();
 });
 
+import authRoutes from "./users/auth.route.js";
 import userRouter from "./users/user.route.js";
 import roleRoutes from "./roles/role.route.js";
 
+app.use("/auth", authRoutes);
 app.use("/users", userRouter);
 app.use("/roles", roleRoutes);
 

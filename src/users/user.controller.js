@@ -1,6 +1,7 @@
 import { User } from "./user.model.js";
 import jwt from "jsonwebtoken";
 import { Role } from "../roles/role.model.js";
+import mongoose from "mongoose";
 
 const resolveRoleTitles = async (role) => {
   if (!role) return null;
@@ -259,6 +260,76 @@ const getAllUsers = async (req, res) => {
   }
 };
 
+const getUser = async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+
+    const user = await User.findById(id).select("-password -__v").lean();
+    if (!user) return res.status(404).json({ message: "User not found." });
+
+    let roleTitle = null;
+    try {
+      roleTitle = await resolveRoleTitles(user.role);
+    } catch (err) {
+      console.error("Failed to resolve role title:", err);
+    }
+
+    const rolePermissions = await getPermissionsFromRoles(user.role);
+    const overridePermissions = user.permissionsOverride ?? {};
+    const combinedPermissions = mergeDeep(rolePermissions, overridePermissions);
+
+    res.status(200).json({
+      user: {
+        id: user._id,
+        employeeId: user.employeeId,
+        position: user.position,
+        firstName: user.firstName,
+        middleName: user.middleName,
+        lastName: user.lastName,
+        username: user.username,
+        email: user.email,
+        role: roleTitle,
+        team: user.team,
+        isActive: user.isActive,
+        // permissions: combinedPermissions,
+        permissionsOverride: user.permissionsOverride ?? {},
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
+const deleteUser = async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+
+    const user = await User.findById(id);
+    if (!user || user.deletedAt) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    user.deletedAt = new Date();
+    await user.save();
+
+    res.status(200).json({
+      message: "User deleted (soft) successfully.",
+      userId: user._id,
+      deletedAt: user.deletedAt,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
 const loginUser = async (req, res) => {
   try {
     console.log("loginUser body:", req.body);
@@ -381,4 +452,11 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
-export { registerUser, getAllUsers, loginUser, logoutUser };
+export {
+  registerUser,
+  getAllUsers,
+  getUser,
+  loginUser,
+  logoutUser,
+  deleteUser,
+};
