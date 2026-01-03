@@ -55,9 +55,11 @@ app.use((req, res, next) => {
 import authRoutes from "./users/auth.route.js";
 import userRouter from "./users/user.route.js";
 import roleRoutes from "./roles/role.route.js";
+import teamRoutes from "./teams/team.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
 app.use("/roles", roleRoutes);
+app.use("/teams", teamRoutes);
 
 export default app;
