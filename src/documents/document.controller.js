@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
-import { Document } from "./document.model.js";
+import { Document } from "../documents/document.model.js";
 
 const NETWORK_PATH = process.env.NETWORK_FILE_PATH;
 const SALT_ROUNDS = parseInt(process.env.FILE_HASH_SALT_ROUNDS ?? "12", 10);

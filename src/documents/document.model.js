@@ -33,4 +33,5 @@ const DocumentSchema = new Schema({
   encryptedId: { type: String }
 }, { timestamps: true });
 
-export const documents = mongoose.model("Document", DocumentSchema);
+export const Document = mongoose.model("Document", DocumentSchema);
+export default Document;

@@ -6,4 +6,4 @@ const router = Router();
 
 router.route("").post(createDocument);
 
-module.exports = router;
+export default router;
