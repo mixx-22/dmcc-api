@@ -8,7 +8,7 @@ app.use(express.json());
 const defaultOrigins = [
   "http://localhost:3000",
   "http://localhost:4000",
-  "http://192.168.0.13:4000",
+  "http://192.168.1.13:4000",
 ];
 const allowedOrigins = (process.env.CLIENT_ORIGIN || defaultOrigins.join(","))
   .split(",")
