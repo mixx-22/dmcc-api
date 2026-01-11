@@ -2,6 +2,7 @@ import { User } from "./user.model.js";
 import jwt from "jsonwebtoken";
 import { Role } from "../roles/role.model.js";
 import mongoose from "mongoose";
+import { generateKey } from "../utils/generateKey.js";
 
 const resolveRoleTitles = async (role) => {
   if (!role) return null;
@@ -97,6 +98,7 @@ const registerUser = async (req, res) => {
       lastName,
       username,
       password,
+      contactNumber,
       email,
       role,
       team,
@@ -149,6 +151,7 @@ const registerUser = async (req, res) => {
       lastName,
       username,
       password,
+      contactNumber,
       email: email.toLowerCase(),
       role,
       team,
@@ -169,6 +172,7 @@ const registerUser = async (req, res) => {
         firstName: user.firstName,
         lastName: user.lastName,
         username: user.username,
+        contactNumber: user.contactNumber,
         email: user.email,
         role: user.role,
         team: user.team,
@@ -249,6 +253,7 @@ const getAllUsers = async (req, res) => {
         firstName: u.firstName,
         middleName: u.middleName,
         lastName: u.lastName,
+        contactNumber: u.contactNumber,
         email: u.email,
         role: roleObjects,
         team: u.team,
@@ -278,11 +283,24 @@ const getUser = async (req, res) => {
     const user = await User.findById(id).select("-password -__v").lean();
     if (!user) return res.status(404).json({ message: "User not found." });
 
-    let roleTitle = null;
-    try {
-      roleTitle = await resolveRoleTitles(user.role);
-    } catch (err) {
-      console.error("Failed to resolve role title:", err);
+    // Resolve role objects with id and title
+    let roleObjects = [];
+    if (user.role) {
+      const roleIds = Array.isArray(user.role) ? user.role : [user.role];
+      const validRoleIds = roleIds.filter((id) => id && mongoose.Types.ObjectId.isValid(id));
+      
+      if (validRoleIds.length > 0) {
+        const roles = await Role.find({ _id: { $in: validRoleIds } })
+          .select("title")
+          .lean();
+        const roleMap = Object.fromEntries(
+          roles.map((r) => [
+            String(r._id),
+            { id: r._id, title: r.title }
+          ])
+        );
+        roleObjects = validRoleIds.map((id) => roleMap[String(id)] ?? { id, title: null });
+      }
     }
 
     const rolePermissions = await getPermissionsFromRoles(user.role);
@@ -298,8 +316,9 @@ const getUser = async (req, res) => {
         middleName: user.middleName,
         lastName: user.lastName,
         username: user.username,
+        contactNumber: user.contactNumber,
         email: user.email,
-        role: roleTitle,
+        role: roleObjects,
         team: user.team,
         isActive: user.isActive,
         // permissions: combinedPermissions,
@@ -367,13 +386,74 @@ const putUser = async (req, res) => {
       user.email = req.body.email.toLowerCase();
     }
 
+    // Handle role validation - only save if valid ObjectId(s)
+    if ("role" in req.body) {
+      const roleValue = req.body.role;
+      
+      if (roleValue === null || roleValue === undefined) {
+        // Allow clearing roles
+        user.role = [];
+      } else if (Array.isArray(roleValue)) {
+        // Validate all items in array are valid ObjectIds
+        const validRoleIds = roleValue.filter((id) => {
+          if (!id) return false;
+          return mongoose.Types.ObjectId.isValid(id);
+        });
+        
+        if (validRoleIds.length !== roleValue.length) {
+          return res.status(400).json({
+            message: "Invalid role ID(s). All role values must be valid ObjectIds.",
+          });
+        }
+        
+        // Verify roles exist in database
+        const existingRoles = await Role.find({
+          _id: { $in: validRoleIds },
+          deletedAt: null,
+        }).select("_id");
+        
+        const existingRoleIds = existingRoles.map((r) => String(r._id));
+        const missingRoleIds = validRoleIds.filter(
+          (id) => !existingRoleIds.includes(String(id))
+        );
+        
+        if (missingRoleIds.length > 0) {
+          return res.status(400).json({
+            message: `Role(s) not found: ${missingRoleIds.join(", ")}`,
+          });
+        }
+        
+        user.role = validRoleIds;
+      } else {
+        // Single value - validate it's a valid ObjectId
+        if (!mongoose.Types.ObjectId.isValid(roleValue)) {
+          return res.status(400).json({
+            message: "Invalid role ID. Role must be a valid ObjectId.",
+          });
+        }
+        
+        // Verify role exists in database
+        const existingRole = await Role.findOne({
+          _id: roleValue,
+          deletedAt: null,
+        }).select("_id");
+        
+        if (!existingRole) {
+          return res.status(400).json({
+            message: "Role not found.",
+          });
+        }
+        
+        user.role = [roleValue];
+      }
+    }
+
     // Apply other allowed updatable fields
     const allowed = [
       "position",
       "firstName",
       "middleName",
       "lastName",
-      "role",
       "team",
       "isActive",
     ];
@@ -407,6 +487,7 @@ const putUser = async (req, res) => {
         middleName: user.middleName,
         lastName: user.lastName,
         username: user.username,
+        contactNumber: user.contactNumber,
         email: user.email,
         role: user.role,
         team: user.team,
@@ -461,6 +542,51 @@ const changePassword = async (req, res) => {
     await user.save();
 
     res.status(200).json({ message: "Password changed successfully." });
+  } catch (error) {
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
+const generatePassword = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const {
+      length = 12,
+      uppercase = true,
+      lowercase = true,
+      numbers = true,
+      symbols = true,
+    } = req.body ?? {};
+
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+
+    const user = await User.findById(id);
+    if (!user || user.deletedAt) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Generate password using generateKey utility
+    const newPassword = generateKey({
+      length: parseInt(length, 10),
+      uppercase,
+      lowercase,
+      numbers,
+      symbols,
+    });
+
+    // Set password (pre-save hook will hash it)
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      message: "Password generated and updated successfully.",
+      userId: user._id,
+      username: user.username,
+      email: user.email,
+      password: newPassword,
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error.", error: error.message });
   }
@@ -619,6 +745,7 @@ export {
   getUser,
   putUser,
   changePassword,
+  generatePassword,
   loginUser,
   logoutUser,
   deleteUser,

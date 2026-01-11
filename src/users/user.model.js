@@ -55,6 +55,11 @@ const userSchema = new Schema(
       trim: true,
     },
 
+    contactNumber: {
+      type: String,
+      trim: true,
+    },
+
     role: {
       type: Array,
       ref: "Role",
