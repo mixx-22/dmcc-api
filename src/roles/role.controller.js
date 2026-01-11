@@ -113,8 +113,14 @@ const putRole = async (req, res) => {
       return res.status(400).json({ message: "No data provided for update." });
     }
 
-    const deleted = await Role.findById(req.params.id);
-    if (!deleted) {
+    console.log(
+      `[putRole] id=${req.params.id} bodyKeys=${Object.keys(req.body).join(
+        ","
+      )}`
+    );
+
+    const role = await Role.findById(req.params.id);
+    if (!role) {
       return res.status(404).json({ message: "Role not found." });
     }
 
@@ -129,21 +135,21 @@ const putRole = async (req, res) => {
     ) {
       // create a new merged object so Mongoose detects the change
       const merged = deepMerge(
-        JSON.parse(JSON.stringify(deleted.permissions ?? {})),
+        JSON.parse(JSON.stringify(role.permissions ?? {})),
         incomingPerms
       );
-      deleted.permissions = merged;
+      role.permissions = merged;
       // ensure mongoose treats this Mixed field as modified
-      deleted.markModified("permissions");
+      role.markModified("permissions");
     }
 
     // apply other updatable fields (exclude permission(s))
     const { permission, permissions, ...other } = req.body;
     Object.keys(other).forEach((k) => {
-      deleted[k] = other[k];
+      role[k] = other[k];
     });
 
-    const saved = await deleted.save();
+    const saved = await role.save();
 
     res.status(200).json({
       message: "Role updated successfully.",

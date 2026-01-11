@@ -5,6 +5,11 @@ const app = express();
 
 app.use(express.json());
 
+app.use((req, res, next) => {
+  console.log(`[incoming] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 const defaultOrigins = [
   "http://localhost:3000",
   "http://localhost:4000",
