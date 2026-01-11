@@ -212,7 +212,7 @@ const getAllUsers = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // resolve role titles
+    // resolve role objects with id and title
     const roleIds = [
       ...new Set(
         users.flatMap((u) =>
@@ -225,16 +225,24 @@ const getAllUsers = async (req, res) => {
       const roles = await Role.find({ _id: { $in: roleIds } })
         .select("title")
         .lean();
-      roleMap = Object.fromEntries(roles.map((r) => [String(r._id), r.title]));
+      roleMap = Object.fromEntries(
+        roles.map((r) => [
+          String(r._id),
+          { id: r._id, title: r.title }
+        ])
+      );
     }
 
     const data = users.map((u) => {
       const r = u.role;
-      let roleTitles = null;
+      let roleObjects = [];
 
-      if (Array.isArray(r))
-        roleTitles = r.map((id) => roleMap[String(id)] ?? id);
-      else if (r) roleTitles = roleMap[String(r)] ?? r;
+      if (Array.isArray(r) && r.length > 0) {
+        roleObjects = r.map((id) => roleMap[String(id)] ?? { id, title: null });
+      } else if (r && !Array.isArray(r)) {
+        roleObjects = [roleMap[String(r)] ?? { id: r, title: null }];
+      }
+      
       return {
         userId: u._id,
         employeeId: u.employeeId,
@@ -242,7 +250,7 @@ const getAllUsers = async (req, res) => {
         middleName: u.middleName,
         lastName: u.lastName,
         email: u.email,
-        role: roleTitles,
+        role: roleObjects,
         team: u.team,
         isActive: u.isActive,
       };
@@ -300,6 +308,159 @@ const getUser = async (req, res) => {
         updatedAt: user.updatedAt,
       },
     });
+  } catch (error) {
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
+const putUser = async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+
+    if (Object.keys(req.body).length === 0) {
+      return res.status(400).json({ message: "No data provided for update." });
+    }
+
+    // Prevent password updates through this endpoint
+    if ("password" in req.body) {
+      return res
+        .status(400)
+        .json({ message: "Use change-password endpoint to update password." });
+    }
+
+    const user = await User.findById(id);
+    if (!user || user.deletedAt) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Unique fields checks
+    if (req.body.employeeId && req.body.employeeId !== user.employeeId) {
+      const exists = await User.findOne({
+        employeeId: req.body.employeeId,
+        _id: { $ne: id },
+      });
+      if (exists)
+        return res.status(400).json({ message: "employeeId already in use." });
+      user.employeeId = req.body.employeeId;
+    }
+
+    if (req.body.username && req.body.username !== user.username) {
+      const exists = await User.findOne({
+        username: req.body.username.toLowerCase(),
+        _id: { $ne: id },
+      });
+      if (exists)
+        return res.status(400).json({ message: "username already in use." });
+      user.username = req.body.username.toLowerCase();
+    }
+
+    if (req.body.email && req.body.email !== user.email) {
+      const exists = await User.findOne({
+        email: req.body.email.toLowerCase(),
+        _id: { $ne: id },
+      });
+      if (exists)
+        return res.status(400).json({ message: "email already in use." });
+      user.email = req.body.email.toLowerCase();
+    }
+
+    // Apply other allowed updatable fields
+    const allowed = [
+      "position",
+      "firstName",
+      "middleName",
+      "lastName",
+      "role",
+      "team",
+      "isActive",
+    ];
+    allowed.forEach((f) => {
+      if (f in req.body) user[f] = req.body[f];
+    });
+
+    // permissionsOverride can be updated directly
+    if ("permissionsOverride" in req.body) {
+      if (
+        typeof req.body.permissionsOverride !== "object" ||
+        Array.isArray(req.body.permissionsOverride)
+      ) {
+        return res
+          .status(400)
+          .json({ message: "permissionsOverride must be an object." });
+      }
+      user.permissionsOverride = req.body.permissionsOverride;
+      user.markModified("permissionsOverride");
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      message: "User updated successfully.",
+      user: {
+        id: user._id,
+        employeeId: user.employeeId,
+        position: user.position,
+        firstName: user.firstName,
+        middleName: user.middleName,
+        lastName: user.lastName,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        team: user.team,
+        isActive: user.isActive,
+        permissionsOverride: user.permissionsOverride,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error.", error: error.message });
+  }
+};
+
+const changePassword = async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { oldPassword, newPassword, confirmPassword } = req.body ?? {};
+
+    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      return res
+        .status(400)
+        .json({
+          message: "oldPassword, newPassword and confirmPassword are required.",
+        });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res
+        .status(400)
+        .json({ message: "New password and confirm password do not match." });
+    }
+
+    if (newPassword.length < 6) {
+      return res
+        .status(400)
+        .json({ message: "New password must be at least 6 characters." });
+    }
+
+    const user = await User.findById(id);
+    if (!user || user.deletedAt) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const valid = await user.validatePassword(oldPassword);
+    if (!valid)
+      return res.status(400).json({ message: "Old password is incorrect." });
+
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({ message: "Password changed successfully." });
   } catch (error) {
     res.status(500).json({ message: "Server error.", error: error.message });
   }
@@ -456,6 +617,8 @@ export {
   registerUser,
   getAllUsers,
   getUser,
+  putUser,
+  changePassword,
   loginUser,
   logoutUser,
   deleteUser,
