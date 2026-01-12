@@ -10,6 +10,8 @@ const roleSchema = new Schema(
 
     isSystemRole: { type: Boolean, default: false },
 
+    Counter: { type: Number, default: 0 },
+
     deletedAt: {
       type: Date,
       default: null,

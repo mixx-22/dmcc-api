@@ -161,6 +161,16 @@ const registerUser = async (req, res) => {
     user.markModified("permissionsOverride");
     await user.save();
 
+    // Update role counter(s) when user is registered with roles
+    if (role) {
+      const roleIds = Array.isArray(role) ? role : [role];
+      for (const roleId of roleIds) {
+        if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
+          await Role.updateOne({ _id: roleId }, { $inc: { Counter: 1 } });
+        }
+      }
+    }
+
     console.log("created user (saved):", user.toObject());
 
     res.status(201).json({
@@ -230,10 +240,7 @@ const getAllUsers = async (req, res) => {
         .select("title")
         .lean();
       roleMap = Object.fromEntries(
-        roles.map((r) => [
-          String(r._id),
-          { id: r._id, title: r.title }
-        ])
+        roles.map((r) => [String(r._id), { id: r._id, title: r.title }])
       );
     }
 
@@ -246,7 +253,7 @@ const getAllUsers = async (req, res) => {
       } else if (r && !Array.isArray(r)) {
         roleObjects = [roleMap[String(r)] ?? { id: r, title: null }];
       }
-      
+
       return {
         userId: u._id,
         employeeId: u.employeeId,
@@ -287,19 +294,20 @@ const getUser = async (req, res) => {
     let roleObjects = [];
     if (user.role) {
       const roleIds = Array.isArray(user.role) ? user.role : [user.role];
-      const validRoleIds = roleIds.filter((id) => id && mongoose.Types.ObjectId.isValid(id));
-      
+      const validRoleIds = roleIds.filter(
+        (id) => id && mongoose.Types.ObjectId.isValid(id)
+      );
+
       if (validRoleIds.length > 0) {
         const roles = await Role.find({ _id: { $in: validRoleIds } })
           .select("title")
           .lean();
         const roleMap = Object.fromEntries(
-          roles.map((r) => [
-            String(r._id),
-            { id: r._id, title: r.title }
-          ])
+          roles.map((r) => [String(r._id), { id: r._id, title: r.title }])
         );
-        roleObjects = validRoleIds.map((id) => roleMap[String(id)] ?? { id, title: null });
+        roleObjects = validRoleIds.map(
+          (id) => roleMap[String(id)] ?? { id, title: null }
+        );
       }
     }
 
@@ -355,6 +363,13 @@ const putUser = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
+    // Track old roles for counter update
+    const oldRoles = user.role
+      ? Array.isArray(user.role)
+        ? user.role
+        : [user.role]
+      : [];
+
     // Unique fields checks
     if (req.body.employeeId && req.body.employeeId !== user.employeeId) {
       const exists = await User.findOne({
@@ -389,7 +404,7 @@ const putUser = async (req, res) => {
     // Handle role validation - only save if valid ObjectId(s)
     if ("role" in req.body) {
       const roleValue = req.body.role;
-      
+
       if (roleValue === null || roleValue === undefined) {
         // Allow clearing roles
         user.role = [];
@@ -399,30 +414,31 @@ const putUser = async (req, res) => {
           if (!id) return false;
           return mongoose.Types.ObjectId.isValid(id);
         });
-        
+
         if (validRoleIds.length !== roleValue.length) {
           return res.status(400).json({
-            message: "Invalid role ID(s). All role values must be valid ObjectIds.",
+            message:
+              "Invalid role ID(s). All role values must be valid ObjectIds.",
           });
         }
-        
+
         // Verify roles exist in database
         const existingRoles = await Role.find({
           _id: { $in: validRoleIds },
           deletedAt: null,
         }).select("_id");
-        
+
         const existingRoleIds = existingRoles.map((r) => String(r._id));
         const missingRoleIds = validRoleIds.filter(
           (id) => !existingRoleIds.includes(String(id))
         );
-        
+
         if (missingRoleIds.length > 0) {
           return res.status(400).json({
             message: `Role(s) not found: ${missingRoleIds.join(", ")}`,
           });
         }
-        
+
         user.role = validRoleIds;
       } else {
         // Single value - validate it's a valid ObjectId
@@ -431,19 +447,19 @@ const putUser = async (req, res) => {
             message: "Invalid role ID. Role must be a valid ObjectId.",
           });
         }
-        
+
         // Verify role exists in database
         const existingRole = await Role.findOne({
           _id: roleValue,
           deletedAt: null,
         }).select("_id");
-        
+
         if (!existingRole) {
           return res.status(400).json({
             message: "Role not found.",
           });
         }
-        
+
         user.role = [roleValue];
       }
     }
@@ -476,6 +492,51 @@ const putUser = async (req, res) => {
     }
 
     await user.save();
+
+    // Update role counters if roles were changed
+    if ("role" in req.body) {
+      const newRoles = user.role
+        ? Array.isArray(user.role)
+          ? user.role
+          : [user.role]
+        : [];
+
+      // Convert to strings for proper comparison
+      const oldRoleStrings = oldRoles.map((r) => r.toString());
+      const newRoleStrings = newRoles.map((r) => r.toString());
+
+      console.log("DEBUG putUser role update:");
+      console.log("oldRoles:", oldRoles);
+      console.log("oldRoleStrings:", oldRoleStrings);
+      console.log("newRoles:", newRoles);
+      console.log("newRoleStrings:", newRoleStrings);
+
+      // Decrement counter for roles that were removed
+      for (const oldRoleId of oldRoles) {
+        const oldRoleString = oldRoleId.toString();
+        if (!newRoleStrings.includes(oldRoleString)) {
+          console.log(`Decrementing role ${oldRoleString}`);
+          const result = await Role.updateOne(
+            { _id: oldRoleId },
+            { $inc: { Counter: -1 } }
+          );
+          console.log(`Decrement result:`, result);
+        }
+      }
+
+      // Increment counter for roles that were added
+      for (const newRoleId of newRoles) {
+        const newRoleString = newRoleId.toString();
+        if (!oldRoleStrings.includes(newRoleString)) {
+          console.log(`Incrementing role ${newRoleString}`);
+          const result = await Role.updateOne(
+            { _id: newRoleId },
+            { $inc: { Counter: 1 } }
+          );
+          console.log(`Increment result:`, result);
+        }
+      }
+    }
 
     res.status(200).json({
       message: "User updated successfully.",
@@ -510,11 +571,9 @@ const changePassword = async (req, res) => {
     }
 
     if (!oldPassword || !newPassword || !confirmPassword) {
-      return res
-        .status(400)
-        .json({
-          message: "oldPassword, newPassword and confirmPassword are required.",
-        });
+      return res.status(400).json({
+        message: "oldPassword, newPassword and confirmPassword are required.",
+      });
     }
 
     if (newPassword !== confirmPassword) {
@@ -604,8 +663,52 @@ const deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
+    // Get user roles before deletion
+    const userRoles = user.role
+      ? Array.isArray(user.role)
+        ? user.role
+        : [user.role]
+      : [];
+
+    // Only decrement counters if the user was active and not already deleted
+    const shouldDecrement = Boolean(user.isActive) && user.deletedAt === null;
+
     user.deletedAt = new Date();
     await user.save();
+
+    if (userRoles.length > 0) {
+      // Normalize and de-duplicate role ids
+      const uniqueRoleIds = Array.from(
+        new Set(userRoles.map((r) => r?.toString()).filter(Boolean))
+      );
+
+      for (const roleIdStr of uniqueRoleIds) {
+        if (!mongoose.Types.ObjectId.isValid(roleIdStr)) {
+          console.log(`Skip recount: invalid role id ${roleIdStr}`);
+          continue;
+        }
+        const roleObjId = new mongoose.Types.ObjectId(roleIdStr);
+        const idStr = roleObjId.toString();
+        // Recompute accurate count: only active, non-deleted users assigned to this role
+        const count = await User.countDocuments({
+          isActive: true,
+          deletedAt: null,
+          $or: [
+            { role: roleObjId },
+            { role: idStr },
+            { role: { $elemMatch: { $eq: roleObjId } } },
+            { role: { $elemMatch: { $eq: idStr } } },
+          ],
+        });
+        const result = await Role.updateOne(
+          { _id: roleObjId },
+          { Counter: count }
+        );
+        console.log(
+          `Recount role ${roleObjId}: active count=${count}, matched=${result.matchedCount}, modified=${result.modifiedCount}`
+        );
+      }
+    }
 
     res.status(200).json({
       message: "User deleted (soft) successfully.",

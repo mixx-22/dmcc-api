@@ -165,15 +165,34 @@ const putRole = async (req, res) => {
 
 const deleteRole = async (req, res) => {
   try {
+    const role = await Role.findById(req.params.id);
+
+    if (!role || role.deletedAt) {
+      return res.status(404).json({ message: "Role not found." });
+    }
+
+    console.log(
+      `Attempting to delete role ${role.title} (ID: ${role._id}), Counter: ${role.Counter}`
+    );
+
+    // Check if role has users assigned (counter > 0)
+    if (role.Counter && role.Counter > 0) {
+      console.log(`Delete blocked: role has ${role.Counter} users`);
+      return res.status(400).json({
+        message: `Cannot delete role. ${role.Counter} user(s) are still assigned to this role.`,
+        roleId: role._id,
+        roleName: role.title,
+        userCount: role.Counter,
+      });
+    }
+
+    console.log(`Proceeding with delete: Counter is ${role.Counter || 0}`);
+
     const updated = await Role.findByIdAndUpdate(
       req.params.id,
       { deletedAt: new Date() },
       { new: true }
     );
-
-    if (!updated) {
-      return res.status(404).json({ message: "Role not found." });
-    }
 
     res.status(200).json({
       message: "Role soft-deleted successfully.",
