@@ -1,9 +1,14 @@
 import mongoose, { Schema } from "mongoose";
 
 const DocumentSchema = new Schema({
+  documentNumber: { type: String, unique: true, required: true },
   title: { type: String, required: true },
   description: { type: String },
+  isoClause: { type: String },
   type: { type: String },
+  version: { type: String },
+  reviewDate: { type: Date },
+  effectiveDate: { type: Date },
   status: { type: String, default: 'draft' },
   parentId: { type: Schema.Types.ObjectId, ref: 'Document' },
   path: { type: String },

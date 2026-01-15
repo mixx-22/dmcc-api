@@ -63,6 +63,16 @@ const createDocument = async (req, res) => {
       return res.status(400).json({ message: validation.message });
     }
 
+    // Set author from authenticated user
+    if (req.user?.id || req.user?._id) {
+      payload.author = payload.author || req.user?.id || req.user?._id;
+    }
+
+    // Set status to draft if not provided
+    if (!payload.status) {
+      payload.status = 'draft';
+    }
+
     if (req.file) {
       if (!NETWORK_PATH) return res.status(500).json({ message: "Server misconfiguration: NETWORK_FILE_PATH not set." });
 
