@@ -564,15 +564,15 @@ const putUser = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const id = req.params.id;
-    const { oldPassword, newPassword, confirmPassword } = req.body ?? {};
+    const { currentPassword, newPassword, confirmPassword } = req.body ?? {};
 
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: "Invalid user id." });
     }
 
-    if (!oldPassword || !newPassword || !confirmPassword) {
+    if (!currentPassword || !newPassword || !confirmPassword) {
       return res.status(400).json({
-        message: "oldPassword, newPassword and confirmPassword are required.",
+        message: "currentPassword, newPassword and confirmPassword are required.",
       });
     }
 
@@ -593,9 +593,9 @@ const changePassword = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    const valid = await user.validatePassword(oldPassword);
+    const valid = await user.validatePassword(currentPassword);
     if (!valid)
-      return res.status(400).json({ message: "Old password is incorrect." });
+      return res.status(400).json({ message: "Current password is incorrect." });
 
     user.password = newPassword;
     await user.save();
