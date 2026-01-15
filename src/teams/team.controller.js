@@ -26,15 +26,21 @@ const formatUserFieldAsObject = (field) => {
         if (!user || typeof user !== "object") return null;
         return {
           id: user._id || user.id,
-          name: getFullName(user),
+          firstname: user.firstName || null,
+          lastname: user.lastName || null,
+          middlename: user.middleName || user.middlename || null,
+          employeeid: user.employeeId || user.employeeid || null,
         };
       })
-      .filter((item) => item && item.name);
+      .filter((item) => item && item.id);
   }
   if (typeof field === "object") {
     return {
       id: field._id || field.id,
-      name: getFullName(field),
+      firstname: field.firstName || null,
+      lastname: field.lastName || null,
+      middlename: field.middleName || field.middlename || null,
+      employeeid: field.employeeId || field.employeeid || null,
     };
   }
   return null;
@@ -95,7 +101,7 @@ const getAllTeams = async (req, res) => {
     const data = await Team.find(filter)
       .populate({
         path: "createdBy leaders members", // use createdBy (camelCase)
-        select: "fullname fullName name firstName lastName",
+        select: "fullname fullName name firstName lastName middleName middlename employeeId employeeid",
       })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -125,7 +131,7 @@ const getTeam = async (req, res) => {
   try {
     const data = await Team.findById(req.params.id).populate({
       path: "createdBy leaders members",
-      select: "firstName lastName fullname fullName name",
+      select: "firstName lastName fullname fullName name middleName middlename employeeId employeeid",
     });
 
     if (!data) {
@@ -193,13 +199,13 @@ const updateTeam = async (req, res) => {
     // return populated & formatted team (same format as getTeam)
     const data = await Team.findById(id).populate({
       path: "createdBy leaders members",
-      select: "firstName lastName fullname fullName name",
+      select: "firstName lastName fullname fullName name middleName middlename employeeId employeeid",
     });
 
     const obj = data.toObject ? data.toObject() : { ...data };
     obj.createdBy = formatUserField(obj.createdBy);
-    obj.leaders = formatUserField(obj.leaders) ?? [];
-    obj.members = formatUserField(obj.members) ?? [];
+    obj.leaders = formatUserFieldAsObject(obj.leaders) ?? [];
+    obj.members = formatUserFieldAsObject(obj.members) ?? [];
 
     return res.status(200).json({ message: "Team updated.", data: obj });
   } catch (error) {
@@ -226,13 +232,13 @@ const deleteTeam = async (req, res) => {
 
     const data = await Team.findById(id).populate({
       path: "createdBy leaders members",
-      select: "firstName lastName fullname fullName name",
+      select: "firstName lastName fullname fullName name middleName middlename employeeId employeeid",
     });
 
     const obj = data.toObject ? data.toObject() : { ...data };
     obj.createdBy = formatUserField(obj.createdBy);
-    obj.leaders = formatUserField(obj.leaders) ?? [];
-    obj.members = formatUserField(obj.members) ?? [];
+    obj.leaders = formatUserFieldAsObject(obj.leaders) ?? [];
+    obj.members = formatUserFieldAsObject(obj.members) ?? [];
 
     return res.status(200).json({ message: "Team deleted.", data: obj });
   } catch (error) {
