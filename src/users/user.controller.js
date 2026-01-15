@@ -606,7 +606,7 @@ const changePassword = async (req, res) => {
   }
 };
 
-const generatePassword = async (req, res) => {
+const resetPassword = async (req, res) => {
   try {
     const id = req.params.id;
     const {
@@ -848,7 +848,7 @@ export {
   getUser,
   putUser,
   changePassword,
-  generatePassword,
+  resetPassword,
   loginUser,
   logoutUser,
   deleteUser,
