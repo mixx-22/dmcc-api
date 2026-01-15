@@ -11,7 +11,7 @@ const router = Router();
 router.route("").post(postTeam);
 router.route("").get(getAllTeams);
 router.route("/:id").get(getTeam);
-router.route("/:id").patch(updateTeam);
+router.route("/:id").put(updateTeam).patch(updateTeam);
 router.route("/:id").delete(deleteTeam);
 
 export default router;

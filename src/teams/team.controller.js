@@ -18,6 +18,28 @@ const formatUserField = (field) => {
   return getFullName(field);
 };
 
+const formatUserFieldAsObject = (field) => {
+  if (!field) return null;
+  if (Array.isArray(field)) {
+    return field
+      .map((user) => {
+        if (!user || typeof user !== "object") return null;
+        return {
+          id: user._id || user.id,
+          name: getFullName(user),
+        };
+      })
+      .filter((item) => item && item.name);
+  }
+  if (typeof field === "object") {
+    return {
+      id: field._id || field.id,
+      name: getFullName(field),
+    };
+  }
+  return null;
+};
+
 const postTeam = async (req, res) => {
   try {
     const {
@@ -82,8 +104,8 @@ const getAllTeams = async (req, res) => {
     const transformed = data.map((d) => {
       const obj = d.toObject ? d.toObject() : { ...d };
       obj.createdBy = formatUserField(obj.createdBy);
-      obj.leaders = formatUserField(obj.leaders) ?? [];
-      obj.members = formatUserField(obj.members) ?? [];
+      obj.leaders = formatUserFieldAsObject(obj.leaders) ?? [];
+      obj.members = formatUserFieldAsObject(obj.members) ?? [];
       return obj;
     });
 
@@ -112,8 +134,8 @@ const getTeam = async (req, res) => {
 
     const obj = data.toObject ? data.toObject() : { ...data };
     obj.createdBy = formatUserField(obj.createdBy);
-    obj.leaders = formatUserField(obj.leaders) ?? [];
-    obj.members = formatUserField(obj.members) ?? [];
+    obj.leaders = formatUserFieldAsObject(obj.leaders) ?? [];
+    obj.members = formatUserFieldAsObject(obj.members) ?? [];
 
     res.status(200).json({ data: obj });
   } catch (error) {
