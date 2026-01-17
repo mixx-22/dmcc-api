@@ -33,7 +33,7 @@ const mergeDeep = (target = {}, source = {}) => {
         tgtVal && typeof tgtVal === "object" && !Array.isArray(tgtVal)
           ? tgtVal
           : {},
-        srcVal
+        srcVal,
       );
       continue;
     }
@@ -63,7 +63,7 @@ const getPermissionsFromRoles = async (role) => {
       }
     } else {
       const roles = await Role.find({ _id: { $in: role } }).select(
-        "permissions"
+        "permissions",
       );
       for (const r of roles) {
         const perms = r.permissions ?? r.permission ?? {};
@@ -74,13 +74,13 @@ const getPermissionsFromRoles = async (role) => {
     if (typeof role === "object") {
       rolePermissions = mergeDeep(
         rolePermissions,
-        role.permissions ?? role.permission ?? {}
+        role.permissions ?? role.permission ?? {},
       );
     } else {
       const roleDoc = await Role.findById(role).select("permissions");
       rolePermissions = mergeDeep(
         rolePermissions,
-        roleDoc ? roleDoc.permissions ?? roleDoc.permission ?? {} : {}
+        roleDoc ? (roleDoc.permissions ?? roleDoc.permission ?? {}) : {},
       );
     }
   }
@@ -231,8 +231,8 @@ const getAllUsers = async (req, res) => {
     const roleIds = [
       ...new Set(
         users.flatMap((u) =>
-          Array.isArray(u.role) ? u.role : u.role ? [u.role] : []
-        )
+          Array.isArray(u.role) ? u.role : u.role ? [u.role] : [],
+        ),
       ),
     ].filter(Boolean);
     let roleMap = {};
@@ -241,7 +241,7 @@ const getAllUsers = async (req, res) => {
         .select("title")
         .lean();
       roleMap = Object.fromEntries(
-        roles.map((r) => [String(r._id), { id: r._id, title: r.title }])
+        roles.map((r) => [String(r._id), { id: r._id, title: r.title }]),
       );
     }
 
@@ -296,7 +296,7 @@ const getUser = async (req, res) => {
     if (user.role) {
       const roleIds = Array.isArray(user.role) ? user.role : [user.role];
       const validRoleIds = roleIds.filter(
-        (id) => id && mongoose.Types.ObjectId.isValid(id)
+        (id) => id && mongoose.Types.ObjectId.isValid(id),
       );
 
       if (validRoleIds.length > 0) {
@@ -304,10 +304,10 @@ const getUser = async (req, res) => {
           .select("title")
           .lean();
         const roleMap = Object.fromEntries(
-          roles.map((r) => [String(r._id), { id: r._id, title: r.title }])
+          roles.map((r) => [String(r._id), { id: r._id, title: r.title }]),
         );
         roleObjects = validRoleIds.map(
-          (id) => roleMap[String(id)] ?? { id, title: null }
+          (id) => roleMap[String(id)] ?? { id, title: null },
         );
       }
     }
@@ -316,12 +316,15 @@ const getUser = async (req, res) => {
     const teams = await Team.find({
       $or: [{ members: user._id }, { leaders: user._id }],
     })
-      .select("name")
+      .select("name leaders")
       .lean();
 
     const teamObjects = teams.map((t) => ({
       id: t._id,
       name: t.name,
+      teamLeader:
+        t.leaders?.some((leaderId) => String(leaderId) === String(user._id)) ||
+        false,
     }));
 
     const rolePermissions = await getPermissionsFromRoles(user.role);
@@ -443,7 +446,7 @@ const putUser = async (req, res) => {
 
         const existingRoleIds = existingRoles.map((r) => String(r._id));
         const missingRoleIds = validRoleIds.filter(
-          (id) => !existingRoleIds.includes(String(id))
+          (id) => !existingRoleIds.includes(String(id)),
         );
 
         if (missingRoleIds.length > 0) {
@@ -531,7 +534,7 @@ const putUser = async (req, res) => {
           console.log(`Decrementing role ${oldRoleString}`);
           const result = await Role.updateOne(
             { _id: oldRoleId },
-            { $inc: { Counter: -1 } }
+            { $inc: { Counter: -1 } },
           );
           console.log(`Decrement result:`, result);
         }
@@ -544,7 +547,7 @@ const putUser = async (req, res) => {
           console.log(`Incrementing role ${newRoleString}`);
           const result = await Role.updateOne(
             { _id: newRoleId },
-            { $inc: { Counter: 1 } }
+            { $inc: { Counter: 1 } },
           );
           console.log(`Increment result:`, result);
         }
@@ -695,7 +698,7 @@ const deleteUser = async (req, res) => {
     if (userRoles.length > 0) {
       // Normalize and de-duplicate role ids
       const uniqueRoleIds = Array.from(
-        new Set(userRoles.map((r) => r?.toString()).filter(Boolean))
+        new Set(userRoles.map((r) => r?.toString()).filter(Boolean)),
       );
 
       for (const roleIdStr of uniqueRoleIds) {
@@ -718,10 +721,10 @@ const deleteUser = async (req, res) => {
         });
         const result = await Role.updateOne(
           { _id: roleObjId },
-          { Counter: count }
+          { Counter: count },
         );
         console.log(
-          `Recount role ${roleObjId}: active count=${count}, matched=${result.matchedCount}, modified=${result.modifiedCount}`
+          `Recount role ${roleObjId}: active count=${count}, matched=${result.matchedCount}, modified=${result.modifiedCount}`,
         );
       }
     }

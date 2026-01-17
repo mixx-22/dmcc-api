@@ -4,6 +4,8 @@ import {
   postDocument,
   getDocuments,
   getDocument,
+  updateDocument,
+  deleteDocument,
   downloadFile,
 } from "./document.controller.js";
 
@@ -16,6 +18,8 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.post("", upload.single("file"), postDocument);
 router.get("", getDocuments);
 router.get("/:id", getDocument);
+router.put("/:id", upload.single("file"), updateDocument);
+router.delete("/:id", deleteDocument);
 router.post("/download", downloadFile);
 
 export default router;

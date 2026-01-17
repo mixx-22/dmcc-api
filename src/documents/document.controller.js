@@ -54,14 +54,19 @@ const postDocument = async (req, res) => {
       });
     }
 
-    const {
-      title,
-      description,
-      type,
-      status,
-      parentId,
-      path: docPath,
-    } = req.body;
+    let docPath;
+    try {
+      docPath = req.body.path ? JSON.parse(req.body.path) : null;
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid JSON format for 'path' field. Path should be an array.",
+        error: error.message,
+      });
+    }
+
+    const { title, description, type, status, parentId } = req.body;
 
     // Validate required fields
     if (!type) {
@@ -160,7 +165,7 @@ const postDocument = async (req, res) => {
       type,
       status: status !== undefined ? status : 0,
       parentId: parentId || null,
-      path: docPath || "",
+      path: docPath || [],
       owner,
       privacy: privacy || { users: [], teams: [], roles: [] },
       permissionOverrides: permissionOverrides || {
@@ -212,14 +217,14 @@ const postDocument = async (req, res) => {
 
 const getDocuments = async (req, res) => {
   try {
-    const { keyword, folder } = req.query;
+    const { keyword, folder, sortBy = "title", sortOrder = "asc" } = req.query;
 
     console.log("Received keyword:", keyword);
     console.log("Received folder:", folder);
     console.log("Full query params:", req.query);
 
     // Build the filter object
-    let filter = {};
+    let filter = { deletedAt: null };
 
     if (folder) {
       // If folder is provided, filter by parentId
@@ -238,14 +243,34 @@ const getDocuments = async (req, res) => {
 
     console.log("Filter being used:", JSON.stringify(filter, null, 2));
 
-    // Find documents with specific fields
-    const documents = await Document.find(filter)
-      .select(
-        "title description type status parentId path owner privacy permissionOverrides",
-      )
+    // Build sort object - folders first, then by specified field
+    const sortDirection = sortOrder === "desc" ? -1 : 1;
+    const sortOptions = [
+      { type: 1 }, // Always sort by type first (folder comes before file alphabetically)
+      { [sortBy]: sortDirection }, // Then sort by specified field
+    ];
+
+    // Find documents with all fields
+    let documents = await Document.find(filter)
       .populate("privacy.users", "firstName lastName")
       .populate("privacy.teams", "name")
-      .populate("privacy.roles", "title");
+      .populate("privacy.roles", "title")
+      .lean();
+
+    // Sort documents: folders first, then apply custom sort
+    documents.sort((a, b) => {
+      // First, ensure folders come first
+      if (a.type === "folder" && b.type !== "folder") return -1;
+      if (a.type !== "folder" && b.type === "folder") return 1;
+
+      // Then sort by the specified field
+      const aValue = a[sortBy];
+      const bValue = b[sortBy];
+
+      if (aValue < bValue) return sortDirection;
+      if (aValue > bValue) return -sortDirection;
+      return 0;
+    });
 
     return res.status(200).json({
       success: true,
@@ -269,8 +294,8 @@ const getDocument = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find document by ID with all fields including metadata
-    const document = await Document.findById(id)
+    // Find document by ID with all fields including metadata (exclude soft-deleted)
+    const document = await Document.findOne({ _id: id, deletedAt: null })
       .populate("privacy.users", "firstName lastName")
       .populate("privacy.teams", "name")
       .populate("privacy.roles", "title");
@@ -301,6 +326,245 @@ const getDocument = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve document",
+      error: error.message,
+    });
+  }
+};
+
+const deleteDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find document by ID (exclude already soft-deleted documents)
+    const document = await Document.findOne({ _id: id, deletedAt: null });
+
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Update deletedAt to current date (soft delete)
+    document.deletedAt = new Date();
+    await document.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Document deleted successfully",
+      data: document,
+    });
+  } catch (error) {
+    console.error("Error in deleteDocument:", error);
+
+    // Handle cast errors (invalid ObjectId)
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid document ID format",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete document",
+      error: error.message,
+    });
+  }
+};
+
+const updateDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find document by ID (exclude soft-deleted documents)
+    const document = await Document.findOne({ _id: id, deletedAt: null });
+
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Parse JSON fields from form-data if they exist
+    let owner, privacy, permissionOverrides, metadata, docPath;
+
+    if (req.body.owner) {
+      try {
+        owner = JSON.parse(req.body.owner);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid JSON format for 'owner' field",
+          error: error.message,
+        });
+      }
+    }
+
+    if (req.body.privacy) {
+      try {
+        privacy = JSON.parse(req.body.privacy);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid JSON format for 'privacy' field",
+          error: error.message,
+        });
+      }
+    }
+
+    if (req.body.permissionOverrides) {
+      try {
+        permissionOverrides = JSON.parse(req.body.permissionOverrides);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid JSON format for 'permissionOverrides' field",
+          error: error.message,
+        });
+      }
+    }
+
+    if (req.body.metadata) {
+      try {
+        metadata = JSON.parse(req.body.metadata);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid JSON format for 'metadata' field",
+          error: error.message,
+        });
+      }
+    }
+
+    if (req.body.path) {
+      try {
+        docPath = JSON.parse(req.body.path);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid JSON format for 'path' field. Path should be an array.",
+          error: error.message,
+        });
+      }
+    }
+
+    const { title, description, type, status, parentId } = req.body;
+
+    // Update fields if provided
+    if (title !== undefined) document.title = title;
+    if (description !== undefined) document.description = description;
+    if (type !== undefined) {
+      const validTypes = [
+        "file",
+        "folder",
+        "auditSchedule",
+        "formTemplate",
+        "formResponse",
+      ];
+      if (!validTypes.includes(type)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid type. Must be one of: ${validTypes.join(", ")}`,
+        });
+      }
+      document.type = type;
+    }
+    if (status !== undefined) document.status = status;
+    if (parentId !== undefined) {
+      if (parentId) {
+        const parentDoc = await Document.findById(parentId);
+        if (!parentDoc) {
+          return res.status(404).json({
+            success: false,
+            message: "Parent document not found",
+          });
+        }
+        if (parentDoc.type !== "folder") {
+          return res.status(400).json({
+            success: false,
+            message: "Parent document must be of type 'folder'",
+          });
+        }
+      }
+      document.parentId = parentId || null;
+    }
+    if (docPath !== undefined) document.path = docPath;
+    if (owner !== undefined) document.owner = owner;
+    if (privacy !== undefined) document.privacy = privacy;
+    if (permissionOverrides !== undefined)
+      document.permissionOverrides = permissionOverrides;
+    if (metadata !== undefined)
+      document.metadata = { ...document.metadata, ...metadata };
+
+    // Handle file upload if a new file is provided
+    if (req.file) {
+      const uploadsDir =
+        process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      // Generate hash from file content
+      const fileBuffer = req.file.buffer;
+      const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+
+      // Store file with hash as filename
+      const fileExtension = path.extname(req.file.originalname);
+      const storedFileName = `${hash}${fileExtension}`;
+      const filePath = path.join(uploadsDir, storedFileName);
+
+      // Write file to disk
+      fs.writeFileSync(filePath, fileBuffer);
+
+      // Update metadata with new file information
+      document.metadata = {
+        ...document.metadata,
+        key: hash,
+        fileName: req.file.originalname,
+        storedFileName: storedFileName,
+        filePath: filePath,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      };
+    }
+
+    // Save updated document
+    const updatedDocument = await document.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Document updated successfully",
+      data: updatedDocument,
+    });
+  } catch (error) {
+    console.error("Error in updateDocument:", error);
+
+    // Handle validation errors
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: Object.keys(error.errors).map((key) => ({
+          field: key,
+          message: error.errors[key].message,
+        })),
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId)
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ID format",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update document",
       error: error.message,
     });
   }
@@ -370,4 +634,11 @@ const downloadFile = async (req, res) => {
   }
 };
 
-export { postDocument, getDocuments, getDocument, downloadFile };
+export {
+  postDocument,
+  getDocuments,
+  getDocument,
+  updateDocument,
+  deleteDocument,
+  downloadFile,
+};

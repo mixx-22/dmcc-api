@@ -28,8 +28,8 @@ const documentSchema = new mongoose.Schema(
       default: null,
     },
     path: {
-      type: String,
-      default: "",
+      type: [String],
+      default: [],
     },
     owner: {
       type: {
@@ -87,12 +87,16 @@ const documentSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
-  }
+    toJSON: { virtuals: false },
+    toObject: { virtuals: false },
+  },
 );
 
 // Pre-save middleware to set default title from filename for file type
