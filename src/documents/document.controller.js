@@ -1,211 +1,220 @@
-import fs from "fs";
-import path from "path";
-import bcrypt from "bcryptjs";
-import mongoose from "mongoose";
-import { Document } from "../documents/document.model.js";
+import Document from "../documents/document.model.js";
 
-const NETWORK_PATH = process.env.NETWORK_FILE_PATH;
-const SALT_ROUNDS = parseInt(process.env.FILE_HASH_SALT_ROUNDS ?? "12", 10);
-
-if (!NETWORK_PATH) {
-  console.warn(
-    "NETWORK_FILE_PATH is not set. File storage will fail if uploads are sent."
-  );
-}
-
-const validateDocumentPayload = (payload = {}) => {
-  if (!payload.title || typeof payload.title !== "string" || !payload.title.trim()) {
-    return { valid: false, message: "title is required and must be a non-empty string." };
-  }
-
-  if (payload.parentId && !mongoose.Types.ObjectId.isValid(String(payload.parentId))) {
-    return { valid: false, message: "parentId must be a valid ObjectId." };
-  }
-
-  if (payload.Owner) {
-    if (typeof payload.Owner !== "object") {
-      return { valid: false, message: "Owner must be an object." };
-    }
-    if (payload.Owner.Id && !mongoose.Types.ObjectId.isValid(String(payload.Owner.Id))) {
-      return { valid: false, message: "Owner.Id must be a valid ObjectId." };
-    }
-  }
-
-  if (payload.privacy) {
-    if (typeof payload.privacy !== "object" || Array.isArray(payload.privacy)) {
-      return { valid: false, message: "privacy must be an object." };
-    }
-    const { users, teams, roles } = payload.privacy;
-    if (users && !Array.isArray(users)) return { valid: false, message: "privacy.users must be an array." };
-    if (teams && !Array.isArray(teams)) return { valid: false, message: "privacy.teams must be an array." };
-    if (roles && !Array.isArray(roles)) return { valid: false, message: "privacy.roles must be an array." };
-  }
-
-  if (payload.permissionOverrides) {
-    if (typeof payload.permissionOverrides !== "object" || Array.isArray(payload.permissionOverrides)) {
-      return { valid: false, message: "permissionOverrides must be an object." };
-    }
-    const { readOnly, restricted } = payload.permissionOverrides;
-    if (readOnly !== undefined && typeof readOnly !== "boolean") return { valid: false, message: "permissionOverrides.readOnly must be a boolean." };
-    if (restricted !== undefined && typeof restricted !== "boolean") return { valid: false, message: "permissionOverrides.restricted must be a boolean." };
-  }
-
-  return { valid: true };
-};
-
-const createDocument = async (req, res) => {
+const postDocument = async (req, res) => {
   try {
-    console.log("createDocument body:", req.body);
-    const payload = { ...(req.body ?? {}) };
+    const {
+      title,
+      description,
+      type,
+      status,
+      parentId,
+      path,
+      owner,
+      privacy,
+      permissionOverrides,
+      metadata,
+    } = req.body;
 
-    const validation = validateDocumentPayload(payload);
-    if (!validation.valid) {
-      return res.status(400).json({ message: validation.message });
+    // Validate required fields
+    if (!type) {
+      return res.status(400).json({
+        success: false,
+        message: "Document type is required",
+      });
     }
 
-    // Set author from authenticated user
-    if (req.user?.id || req.user?._id) {
-      payload.author = payload.author || req.user?.id || req.user?._id;
+    if (!owner || !owner.id || !owner.firstName || !owner.lastName) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Owner information is required (id, firstName, lastName, type, team)",
+      });
     }
 
-    // Set status to draft if not provided
-    if (!payload.status) {
-      payload.status = 'draft';
+    // Validate type enum
+    const validTypes = [
+      "file",
+      "folder",
+      "auditSchedule",
+      "formTemplate",
+      "formResponse",
+    ];
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid type. Must be one of: ${validTypes.join(", ")}`,
+      });
     }
 
-    if (req.file) {
-      if (!NETWORK_PATH) return res.status(500).json({ message: "Server misconfiguration: NETWORK_FILE_PATH not set." });
-
-      await fs.promises.mkdir(NETWORK_PATH, { recursive: true });
-
-      const timestamp = Date.now();
-      const storageName = `${timestamp}-${req.file.originalname}`;
-      const targetPath = path.join(NETWORK_PATH, storageName);
-
-      await fs.promises.writeFile(targetPath, req.file.buffer);
-
-      // bcryptjs one-way hash used as encryptedId/token
-      const hashedId = await bcrypt.hash(`${targetPath}:${timestamp}`, SALT_ROUNDS);
-
-      payload.file = {
-        originalName: req.file.originalname,
-        storageName,
-        path: targetPath,
-        size: req.file.size,
-        mimeType: req.file.mimetype,
-      };
-      payload.encryptedId = hashedId;
-      payload.path = targetPath;
+    // If parentId is provided, verify it exists
+    if (parentId) {
+      const parentDoc = await Document.findById(parentId);
+      if (!parentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: "Parent document not found",
+        });
+      }
+      if (parentDoc.type !== "folder") {
+        return res.status(400).json({
+          success: false,
+          message: "Parent document must be of type 'folder'",
+        });
+      }
     }
 
-    const doc = await Document.create(payload);
-    return res.status(201).json({ message: "Document created successfully.", document: doc });
-  } catch (error) {
-    console.error("createDocument error:", error);
-    return res.status(500).json({ message: "Server error.", error: error.message });
-  }
-};
+    // Create new document
+    const newDocument = new Document({
+      title,
+      description,
+      type,
+      status: status !== undefined ? status : 0,
+      parentId: parentId || null,
+      path: path || "",
+      owner,
+      privacy: privacy || { users: [], teams: [], roles: [] },
+      permissionOverrides: permissionOverrides || {
+        readOnly: 1,
+        restricted: 1,
+      },
+      metadata: metadata || {},
+    });
 
-const listDocuments = async (req, res) => {
-  try {
-    const page = Math.max(parseInt(req.query.page ?? "1", 10), 1);
-    const maxLimit = 100;
-    let limit = Math.max(parseInt(req.query.limit ?? "10", 10), 1);
-    if (limit > maxLimit) limit = maxLimit;
-    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+    // Save document
+    const savedDocument = await newDocument.save();
 
-    const filter = {};
-    if (keyword) {
-      const re = new RegExp(keyword, "i");
-      filter.$or = [{ title: re }, { description: re }, { type: re }, { status: re }];
-    }
-
-    const total = await Document.countDocuments(filter);
-    const totalPages = Math.max(Math.ceil(total / limit), 1);
-    const pageClamped = Math.min(Math.max(page, 1), totalPages);
-
-    const docs = await Document.find(filter)
-      .skip((pageClamped - 1) * limit)
-      .limit(limit)
-      .sort({ createdAt: -1 })
-      .lean();
-
-    return res.status(200).json({
-      data: docs,
-      meta: { total, page: pageClamped, limit, totalPages },
+    // Return without populating for now to isolate the issue
+    return res.status(201).json({
+      success: true,
+      message: "Document created successfully",
+      data: savedDocument,
     });
   } catch (error) {
-    console.error("listDocuments error:", error);
-    return res.status(500).json({ message: "Server error.", error: error.message });
+    console.error("Error in postDocument:", error);
+
+    // Handle validation errors
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: "Validation error",
+        errors: Object.keys(error.errors).map((key) => ({
+          field: key,
+          message: error.errors[key].message,
+        })),
+      });
+    }
+
+    // Handle cast errors (invalid ObjectId)
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid ID format",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create document",
+      error: error.message,
+    });
+  }
+};
+
+const getDocuments = async (req, res) => {
+  try {
+    const { keyword, folder } = req.query;
+
+    console.log("Received keyword:", keyword);
+    console.log("Received folder:", folder);
+    console.log("Full query params:", req.query);
+
+    // Build the filter object
+    let filter = {};
+
+    if (folder) {
+      // If folder is provided, filter by parentId
+      filter.parentId = folder;
+    } else if (keyword && keyword.trim() !== "") {
+      // If keyword is provided, search in title, description, and owner fields
+      filter.$or = [
+        { title: { $regex: keyword.trim(), $options: "i" } },
+        { description: { $regex: keyword.trim(), $options: "i" } },
+        { "owner.firstName": { $regex: keyword.trim(), $options: "i" } },
+        { "owner.lastName": { $regex: keyword.trim(), $options: "i" } },
+      ];
+    } else {
+      // If no keyword or folder, filter by parentId: null
+      filter.parentId = null;
+    }
+
+    console.log("Filter being used:", JSON.stringify(filter, null, 2));
+
+    // Find documents with specific fields
+    const documents = await Document.find(filter)
+      .select(
+        "title description type status parentId path owner privacy permissionOverrides",
+      )
+      .populate("privacy.users", "firstName lastName")
+      .populate("privacy.teams", "name")
+      .populate("privacy.roles", "title");
+
+    return res.status(200).json({
+      success: true,
+      message: keyword
+        ? "Documents retrieved successfully"
+        : "Root documents retrieved successfully",
+      data: documents,
+    });
+  } catch (error) {
+    console.error("Error in getDocument:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve documents",
+      error: error.message,
+    });
   }
 };
 
 const getDocument = async (req, res) => {
   try {
-    const id = req.params.id;
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid document id." });
+    const { id } = req.params;
+
+    // Find document by ID with all fields including metadata
+    const document = await Document.findById(id)
+      .populate("privacy.users", "firstName lastName")
+      .populate("privacy.teams", "name")
+      .populate("privacy.roles", "title");
+
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
     }
 
-    const doc = await Document.findById(id)
-      .populate("Owner.Id author privacy.users privacy.teams")
-      .lean();
-
-    if (!doc) return res.status(404).json({ message: "Document not found." });
-
-    return res.status(200).json({ document: doc });
+    return res.status(200).json({
+      success: true,
+      message: "Document retrieved successfully",
+      data: document,
+    });
   } catch (error) {
-    console.error("getDocument error:", error);
-    return res.status(500).json({ message: "Server error.", error: error.message });
+    console.error("Error in getDocument:", error);
+
+    // Handle cast errors (invalid ObjectId)
+    if (error.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid document ID format",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve document",
+      error: error.message,
+    });
   }
 };
 
-const updateDocument = async (req, res) => {
-  try {
-    const id = req.params.id;
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid document id." });
-    }
-
-    const payload = { ...(req.body ?? {}) };
-
-    // validate partial payload where applicable
-    const validation = validateDocumentPayload({ title: payload.title ?? "ok", parentId: payload.parentId, Owner: payload.Owner, privacy: payload.privacy, permissionOverrides: payload.permissionOverrides });
-    if (!validation.valid) {
-      return res.status(400).json({ message: validation.message });
-    }
-
-    const updated = await Document.findByIdAndUpdate(id, { $set: payload }, { new: true, runValidators: true });
-    if (!updated) return res.status(404).json({ message: "Document not found." });
-
-    return res.status(200).json({ message: "Document updated.", document: updated });
-  } catch (error) {
-    console.error("updateDocument error:", error);
-    return res.status(500).json({ message: "Server error.", error: error.message });
-  }
-};
-
-const deleteDocument = async (req, res) => {
-  try {
-    const id = req.params.id;
-    if (!id || !mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid document id." });
-    }
-
-    const removed = await Document.findByIdAndDelete(id);
-    if (!removed) return res.status(404).json({ message: "Document not found." });
-
-    return res.status(200).json({ message: "Document deleted successfully.", documentId: removed._id });
-  } catch (error) {
-    console.error("deleteDocument error:", error);
-    return res.status(500).json({ message: "Server error.", error: error.message });
-  }
-};
-
-export {
-  createDocument,
-  listDocuments,
-  getDocument,
-  updateDocument,
-  deleteDocument,
-};
+export { postDocument, getDocuments, getDocument };

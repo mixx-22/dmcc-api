@@ -1,42 +1,122 @@
-import mongoose, { Schema } from "mongoose";
+import mongoose from "mongoose";
 
-const DocumentSchema = new Schema({
-  documentNumber: { type: String, unique: true, required: true },
-  title: { type: String, required: true },
-  description: { type: String },
-  isoClause: { type: String },
-  type: { type: String },
-  version: { type: String },
-  reviewDate: { type: Date },
-  effectiveDate: { type: Date },
-  status: { type: String, default: 'draft' },
-  parentId: { type: Schema.Types.ObjectId, ref: 'Document' },
-  path: { type: String },
-  Owner: {
-    type: { type: String },
-    Id: { type: Schema.Types.ObjectId, ref: 'User' }
+const documentSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      default: "",
+      required: true,
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    type: {
+      type: String,
+      enum: ["file", "folder", "auditSchedule", "formTemplate", "formResponse"],
+      required: true,
+    },
+    status: {
+      type: Number,
+      default: 0,
+      min: -1,
+      max: 3,
+    },
+    parentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Document",
+      default: null,
+    },
+    path: {
+      type: String,
+      default: "",
+    },
+    owner: {
+      type: {
+        type: String,
+        required: true,
+      },
+      id: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true,
+      },
+      firstName: {
+        type: String,
+        required: true,
+      },
+      lastName: {
+        type: String,
+        required: true,
+      },
+      team: {
+        type: String,
+        required: true,
+      },
+    },
+    privacy: {
+      users: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+      ],
+      teams: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Team",
+        },
+      ],
+      roles: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Role",
+        },
+      ],
+    },
+    permissionOverrides: {
+      readOnly: {
+        type: Number,
+        default: 1,
+      },
+      restricted: {
+        type: Number,
+        default: 1,
+      },
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
-  privacy: {
-    users: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-    teams: [{ type: Schema.Types.ObjectId, ref: 'Team' }],
-    roles: [{ type: Schema.Types.ObjectId, ref: 'Roles' }],
-  },
-  permissionOverrides: {
-    readOnly: { type: Boolean, default: false },
-    restricted: { type: Boolean, default: false }
-  },
-  author: { type: Schema.Types.ObjectId, ref: 'User' },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
 
-  file: {
-    originalName: { type: String },
-    storageName: { type: String },
-    path: { type: String },
-    size: { type: Number },
-    mimeType: { type: String }
-  },
+// Pre-save middleware to set default title from filename for file type
+documentSchema.pre("save", function () {
+  if (
+    this.type === "file" &&
+    !this.title &&
+    this.metadata &&
+    this.metadata.filename
+  ) {
+    this.title = this.metadata.filename;
+  }
+});
 
-  encryptedId: { type: String }
-}, { timestamps: true });
+// Indexes for better query performance
+documentSchema.index({ type: 1 });
+documentSchema.index({ status: 1 });
+documentSchema.index({ parentId: 1 });
+documentSchema.index({ "owner.id": 1 });
+documentSchema.index({ "privacy.users": 1 });
+documentSchema.index({ "privacy.teams": 1 });
+documentSchema.index({ "privacy.roles": 1 });
 
-export const Document = mongoose.model("Document", DocumentSchema);
+const Document =
+  mongoose.models.Document || mongoose.model("Document", documentSchema);
+
 export default Document;

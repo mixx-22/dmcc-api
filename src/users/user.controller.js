@@ -1,6 +1,7 @@
 import { User } from "./user.model.js";
 import jwt from "jsonwebtoken";
 import { Role } from "../roles/role.model.js";
+import { Team } from "../teams/team.model.js";
 import mongoose from "mongoose";
 import { generateKey } from "../utils/generateKey.js";
 
@@ -311,6 +312,18 @@ const getUser = async (req, res) => {
       }
     }
 
+    // Resolve team objects with id and name - query teams where user is a member or leader
+    const teams = await Team.find({
+      $or: [{ members: user._id }, { leaders: user._id }],
+    })
+      .select("name")
+      .lean();
+
+    const teamObjects = teams.map((t) => ({
+      id: t._id,
+      name: t.name,
+    }));
+
     const rolePermissions = await getPermissionsFromRoles(user.role);
     const overridePermissions = user.permissionsOverride ?? {};
     const combinedPermissions = mergeDeep(rolePermissions, overridePermissions);
@@ -327,7 +340,7 @@ const getUser = async (req, res) => {
         contactNumber: user.contactNumber,
         email: user.email,
         role: roleObjects,
-        team: user.team,
+        team: teamObjects,
         isActive: user.isActive,
         // permissions: combinedPermissions,
         permissionsOverride: user.permissionsOverride ?? {},
@@ -572,7 +585,8 @@ const changePassword = async (req, res) => {
 
     if (!currentPassword || !newPassword || !confirmPassword) {
       return res.status(400).json({
-        message: "currentPassword, newPassword and confirmPassword are required.",
+        message:
+          "currentPassword, newPassword and confirmPassword are required.",
       });
     }
 
@@ -595,7 +609,9 @@ const changePassword = async (req, res) => {
 
     const valid = await user.validatePassword(currentPassword);
     if (!valid)
-      return res.status(400).json({ message: "Current password is incorrect." });
+      return res
+        .status(400)
+        .json({ message: "Current password is incorrect." });
 
     user.password = newPassword;
     await user.save();

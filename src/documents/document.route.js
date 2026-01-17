@@ -1,9 +1,15 @@
-import { Router } from "express";
+import express from "express";
 import {
-  createDocument,
-} from "../documents/document.controller.js";
-const router = Router();
+  postDocument,
+  getDocuments,
+  getDocument,
+} from "./document.controller.js";
 
-router.route("").post(createDocument);
+const router = express.Router();
+
+// POST /api/documents - Create a new document
+router.post("", postDocument);
+router.get("", getDocuments);
+router.get("/:id", getDocument);
 
 export default router;
