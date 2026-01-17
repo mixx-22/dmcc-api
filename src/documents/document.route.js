@@ -1,15 +1,21 @@
 import express from "express";
+import multer from "multer";
 import {
   postDocument,
   getDocuments,
   getDocument,
+  downloadFile,
 } from "./document.controller.js";
 
 const router = express.Router();
 
+// Configure multer to store file in memory
+const upload = multer({ storage: multer.memoryStorage() });
+
 // POST /api/documents - Create a new document
-router.post("", postDocument);
+router.post("", upload.single("file"), postDocument);
 router.get("", getDocuments);
 router.get("/:id", getDocument);
+router.post("/download", downloadFile);
 
 export default router;
