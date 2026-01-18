@@ -6,6 +6,7 @@ import {
   putRole,
   deleteRole,
 } from "../roles/role.controller.js";
+import { authenticate } from "../users/user.controller.js";
 const router = Router();
 
 router.use((req, res, next) => {
@@ -18,10 +19,10 @@ router.all("/:id", (req, res, next) => {
   next();
 });
 
-router.route("").post(postRole);
-router.route("").get(getAllRoles);
-router.route("/:id").get(getRole);
-router.route("/:id").put(putRole).patch(putRole);
-router.route("/:id").delete(deleteRole);
+router.route("").post(authenticate, postRole);
+router.route("").get(authenticate, getAllRoles);
+router.route("/:id").get(authenticate, getRole);
+router.route("/:id").put(authenticate, putRole).patch(authenticate, putRole);
+router.route("/:id").delete(authenticate, deleteRole);
 
 export default router;
