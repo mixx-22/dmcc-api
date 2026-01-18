@@ -1,5 +1,5 @@
 import Document from "../documents/document.model.js";
-import { RecentDocs } from "../logs/recentDocuments/recentDocs.model.js";
+import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
