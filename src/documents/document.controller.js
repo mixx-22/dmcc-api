@@ -9,61 +9,89 @@ const __dirname = path.dirname(__filename);
 
 const postDocument = async (req, res) => {
   try {
-    // Parse JSON fields from form-data
-    let owner, privacy, permissionOverrides, metadata;
+    // Handle both JSON and form-data
+    let permissionOverrides, metadata, docPath, privacy;
 
-    try {
-      owner = req.body.owner ? JSON.parse(req.body.owner) : null;
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid JSON format for 'owner' field",
-        error: error.message,
-      });
+    // If privacy is a string (from form-data), parse it
+    if (req.body.privacy) {
+      if (typeof req.body.privacy === "string") {
+        try {
+          privacy = JSON.parse(req.body.privacy);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Invalid JSON format for \'privacy\' field. Example: {"users":[],"teams":[],"roles":[]}',
+            error: error.message,
+          });
+        }
+      } else {
+        privacy = req.body.privacy;
+      }
     }
 
-    try {
-      privacy = req.body.privacy ? JSON.parse(req.body.privacy) : null;
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid JSON format for 'privacy' field",
-        error: error.message,
-      });
+    // If permissionOverrides is a string (from form-data), parse it
+    if (req.body.permissionOverrides) {
+      if (typeof req.body.permissionOverrides === "string") {
+        try {
+          permissionOverrides = JSON.parse(req.body.permissionOverrides);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Invalid JSON format for \'permissionOverrides\' field. Example: {"readOnly":1,"restricted":1}',
+            error: error.message,
+          });
+        }
+      } else {
+        permissionOverrides = req.body.permissionOverrides;
+      }
     }
 
-    try {
-      permissionOverrides = req.body.permissionOverrides
-        ? JSON.parse(req.body.permissionOverrides)
-        : null;
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid JSON format for 'permissionOverrides' field",
-        error: error.message,
-      });
+    // If metadata is a string (from form-data), parse it
+    if (req.body.metadata) {
+      if (typeof req.body.metadata === "string") {
+        try {
+          metadata = JSON.parse(req.body.metadata);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid JSON format for 'metadata' field",
+            error: error.message,
+          });
+        }
+      } else {
+        metadata = req.body.metadata;
+      }
     }
 
-    try {
-      metadata = req.body.metadata ? JSON.parse(req.body.metadata) : null;
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid JSON format for 'metadata' field",
-        error: error.message,
-      });
-    }
-
-    let docPath;
-    try {
-      docPath = req.body.path ? JSON.parse(req.body.path) : null;
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid JSON format for 'path' field. Path should be an array.",
-        error: error.message,
-      });
+    // Handle path - should be an array
+    if (req.body.path !== undefined) {
+      if (Array.isArray(req.body.path)) {
+        docPath = req.body.path;
+      } else if (typeof req.body.path === "string") {
+        // If it's a JSON string representing an array, parse it
+        if (req.body.path.startsWith("[")) {
+          try {
+            docPath = JSON.parse(req.body.path);
+          } catch (error) {
+            return res.status(400).json({
+              success: false,
+              message:
+                "Invalid JSON format for 'path' field. Path should be an array like []",
+              error: error.message,
+            });
+          }
+        } else {
+          // If it's a plain string, convert to array with that string
+          docPath = req.body.path ? [req.body.path] : [];
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "Path should be an array.",
+        });
+      }
     }
 
     const { title, description, type, status, parentId } = req.body;
@@ -84,11 +112,12 @@ const postDocument = async (req, res) => {
       });
     }
 
-    if (!owner || !owner.id || !owner.firstName || !owner.lastName) {
-      return res.status(400).json({
+    // Get owner from authenticated user
+    const owner = req.user?._id || req.user?.id;
+    if (!owner) {
+      return res.status(401).json({
         success: false,
-        message:
-          "Owner information is required (id, firstName, lastName, type, team)",
+        message: "User authentication required",
       });
     }
 
@@ -225,9 +254,25 @@ const getDocuments = async (req, res) => {
 
     // Build the filter object
     let filter = { deletedAt: null };
+    let folderInfo = null;
 
     if (folder) {
-      // If folder is provided, filter by parentId
+      // If folder is provided, get folder information
+      folderInfo = await Document.findOne({ _id: folder, deletedAt: null })
+        .populate("owner", "firstName lastName email")
+        .populate("privacy.users", "firstName lastName email")
+        .populate("privacy.teams", "name")
+        .populate("privacy.roles", "title")
+        .lean();
+
+      if (!folderInfo) {
+        return res.status(404).json({
+          success: false,
+          message: "Folder not found",
+        });
+      }
+
+      // Filter by parentId
       filter.parentId = folder;
     } else if (keyword && keyword.trim() !== "") {
       // If keyword is provided, search in title, description, and owner fields
@@ -252,7 +297,8 @@ const getDocuments = async (req, res) => {
 
     // Find documents with all fields
     let documents = await Document.find(filter)
-      .populate("privacy.users", "firstName lastName")
+      .populate("owner", "firstName lastName email")
+      .populate("privacy.users", "firstName lastName email")
       .populate("privacy.teams", "name")
       .populate("privacy.roles", "title")
       .lean();
@@ -272,12 +318,42 @@ const getDocuments = async (req, res) => {
       return 0;
     });
 
+    // Prepare response data
+    const responseData = {
+      documents,
+      ...(folderInfo && { folder: folderInfo }),
+    };
+
+    // If folder is provided, fetch parent information
+    let parentData = null;
+    if (folderInfo && folderInfo.parentId) {
+      const parent = await Document.findOne({
+        _id: folderInfo.parentId,
+        deletedAt: null,
+      })
+        .select("_id title parentId")
+        .lean();
+
+      if (parent) {
+        parentData = {
+          id: parent._id,
+          title: parent.title,
+          parentId: parent.parentId || null,
+        };
+        // Replace parentId with parentData in folderInfo
+        folderInfo.parentData = parentData;
+        delete folderInfo.parentId;
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: keyword
         ? "Documents retrieved successfully"
-        : "Root documents retrieved successfully",
-      data: documents,
+        : folder
+          ? "Folder contents retrieved successfully"
+          : "Root documents retrieved successfully",
+      data: responseData,
     });
   } catch (error) {
     console.error("Error in getDocument:", error);
@@ -295,8 +371,12 @@ const getDocument = async (req, res) => {
     const { id } = req.params;
 
     // Find document by ID with all fields including metadata (exclude soft-deleted)
-    const document = await Document.findOne({ _id: id, deletedAt: null })
-      .populate("privacy.users", "firstName lastName")
+    const document = await Document.findOne({
+      _id: id,
+      deletedAt: null,
+    })
+      .populate("owner", "firstName lastName email")
+      .populate("privacy.users", "firstName lastName email")
       .populate("privacy.teams", "name")
       .populate("privacy.roles", "title");
 
@@ -307,10 +387,49 @@ const getDocument = async (req, res) => {
       });
     }
 
+    // If it's a folder, fetch its contents
+    let responseData = document.toObject();
+
+    if (document.type === "folder") {
+      const children = await Document.find({
+        parentId: document._id,
+        deletedAt: null,
+      })
+        .populate("owner", "firstName lastName email")
+        .populate("privacy.users", "firstName lastName email")
+        .populate("privacy.teams", "name")
+        .populate("privacy.roles", "title")
+        .lean();
+
+      responseData.children = children;
+    }
+
+    // If document has a parent, fetch parent information
+    let parentData = null;
+    if (document.parentId) {
+      const parent = await Document.findOne({
+        _id: document.parentId,
+        deletedAt: null,
+      })
+        .select("_id title parentId")
+        .lean();
+
+      if (parent) {
+        parentData = {
+          id: parent._id,
+          title: parent.title,
+          ParentId: parent.parentId || null,
+        };
+        // Replace parentId with parentData in response
+        responseData.parentData = parentData;
+        delete responseData.parentId;
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Document retrieved successfully",
-      data: document,
+      data: responseData,
     });
   } catch (error) {
     console.error("Error in getDocument:", error);
@@ -388,29 +507,22 @@ const updateDocument = async (req, res) => {
     }
 
     // Parse JSON fields from form-data if they exist
-    let owner, privacy, permissionOverrides, metadata, docPath;
-
-    if (req.body.owner) {
-      try {
-        owner = JSON.parse(req.body.owner);
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid JSON format for 'owner' field",
-          error: error.message,
-        });
-      }
-    }
+    let permissionOverrides, metadata, docPath, privacy;
 
     if (req.body.privacy) {
-      try {
-        privacy = JSON.parse(req.body.privacy);
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid JSON format for 'privacy' field",
-          error: error.message,
-        });
+      if (typeof req.body.privacy === "string") {
+        try {
+          privacy = JSON.parse(req.body.privacy);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Invalid JSON format for \'privacy\' field. Example: {"users":[],"teams":[],"roles":[]}',
+            error: error.message,
+          });
+        }
+      } else {
+        privacy = req.body.privacy;
       }
     }
 
@@ -492,7 +604,6 @@ const updateDocument = async (req, res) => {
       document.parentId = parentId || null;
     }
     if (docPath !== undefined) document.path = docPath;
-    if (owner !== undefined) document.owner = owner;
     if (privacy !== undefined) document.privacy = privacy;
     if (permissionOverrides !== undefined)
       document.permissionOverrides = permissionOverrides;

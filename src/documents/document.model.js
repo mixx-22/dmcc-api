@@ -22,6 +22,11 @@ const documentSchema = new mongoose.Schema(
       min: -1,
       max: 3,
     },
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     parentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Document",
@@ -30,28 +35,6 @@ const documentSchema = new mongoose.Schema(
     path: {
       type: [String],
       default: [],
-    },
-    owner: {
-      type: {
-        type: String,
-        required: true,
-      },
-      id: {
-        type: mongoose.Schema.Types.ObjectId,
-        required: true,
-      },
-      firstName: {
-        type: String,
-        required: true,
-      },
-      lastName: {
-        type: String,
-        required: true,
-      },
-      team: {
-        type: String,
-        required: true,
-      },
     },
     privacy: {
       users: [
@@ -115,10 +98,7 @@ documentSchema.pre("save", function () {
 documentSchema.index({ type: 1 });
 documentSchema.index({ status: 1 });
 documentSchema.index({ parentId: 1 });
-documentSchema.index({ "owner.id": 1 });
-documentSchema.index({ "privacy.users": 1 });
-documentSchema.index({ "privacy.teams": 1 });
-documentSchema.index({ "privacy.roles": 1 });
+documentSchema.index({ owner: 1 });
 
 const Document =
   mongoose.models.Document || mongoose.model("Document", documentSchema);

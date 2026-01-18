@@ -8,6 +8,7 @@ import {
   deleteDocument,
   downloadFile,
 } from "./document.controller.js";
+import { authenticate } from "../users/user.controller.js";
 
 const router = express.Router();
 
@@ -15,11 +16,11 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // POST /api/documents - Create a new document
-router.post("", upload.single("file"), postDocument);
-router.get("", getDocuments);
-router.get("/:id", getDocument);
-router.put("/:id", upload.single("file"), updateDocument);
-router.delete("/:id", deleteDocument);
-router.post("/download", downloadFile);
+router.post("", authenticate, upload.single("file"), postDocument);
+router.get("", authenticate, getDocuments);
+router.get("/:id", authenticate, getDocument);
+router.put("/:id", authenticate, upload.single("file"), updateDocument);
+router.delete("/:id", authenticate, deleteDocument);
+router.post("/download", authenticate, downloadFile);
 
 export default router;

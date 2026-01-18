@@ -792,10 +792,44 @@ const loginUser = async (req, res) => {
     });
 
     let roleTitle = null;
+    let roleData = null;
     try {
       roleTitle = await resolveRoleTitles(user.role);
+      // Get role data with id and title
+      if (user.role) {
+        if (Array.isArray(user.role)) {
+          const roles = await Role.find({ _id: { $in: user.role } }).select(
+            "_id title",
+          );
+          roleData = roles.map((r) => ({ roleId: r._id, title: r.title }));
+        } else {
+          const roleDoc = await Role.findById(user.role).select("_id title");
+          if (roleDoc) {
+            roleData = { roleId: roleDoc._id, title: roleDoc.title };
+          }
+        }
+      }
     } catch (err) {
       console.error("Failed to resolve role title:", err);
+    }
+
+    // Get team data with teamId and name by finding teams where user is a member or leader
+    let teamData = null;
+    try {
+      const teams = await Team.find({
+        $or: [{ members: user._id }, { leaders: user._id }],
+        deletedAt: null,
+      }).select("_id name");
+
+      if (teams.length > 0) {
+        if (teams.length === 1) {
+          teamData = { teamId: teams[0]._id, name: teams[0].name };
+        } else {
+          teamData = teams.map((t) => ({ teamId: t._id, name: t.name }));
+        }
+      }
+    } catch (err) {
+      console.error("Failed to resolve team data:", err);
     }
 
     const rolePermissions = await getPermissionsFromRoles(user.role);
@@ -813,8 +847,8 @@ const loginUser = async (req, res) => {
         lastName: user.lastName,
         username: user.username,
         email: user.email,
-        role: roleTitle,
-        team: user.team,
+        role: roleData,
+        team: teamData,
         permissions: combinedPermissions,
         permissionsOverride: user.permissionsOverride,
         token: token,
