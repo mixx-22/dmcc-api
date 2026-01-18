@@ -1,4 +1,5 @@
 import Document from "../documents/document.model.js";
+import { RecentDocs } from "../logs/recentDocuments/recentDocs.model.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -284,6 +285,36 @@ const getDocuments = async (req, res) => {
         });
       }
 
+      // Log folder access in recent documents
+      const userId = req.user?._id || req.user?.id;
+      if (userId) {
+        try {
+          const existingRecord = await RecentDocs.findOne({
+            userId,
+            documentId: folder,
+          });
+
+          if (existingRecord) {
+            existingRecord.accessedAt = new Date();
+            existingRecord.count += 1;
+            existingRecord.documentType = folderInfo.type;
+            await existingRecord.save();
+          } else {
+            const newRecord = new RecentDocs({
+              userId,
+              documentId: folder,
+              documentType: folderInfo.type,
+              accessedAt: new Date(),
+              count: 1,
+            });
+            await newRecord.save();
+          }
+        } catch (logError) {
+          console.error("Error logging document access:", logError);
+          // Don't fail the request if logging fails
+        }
+      }
+
       // Filter by parentId
       filter.parentId = folder;
     } else if (keyword && keyword.trim() !== "") {
@@ -397,6 +428,36 @@ const getDocument = async (req, res) => {
         success: false,
         message: "Document not found",
       });
+    }
+
+    // Log document access in recent documents
+    const userId = req.user?._id || req.user?.id;
+    if (userId) {
+      try {
+        const existingRecord = await RecentDocs.findOne({
+          userId,
+          documentId: id,
+        });
+
+        if (existingRecord) {
+          existingRecord.accessedAt = new Date();
+          existingRecord.count += 1;
+          existingRecord.documentType = document.type;
+          await existingRecord.save();
+        } else {
+          const newRecord = new RecentDocs({
+            userId,
+            documentId: id,
+            documentType: document.type,
+            accessedAt: new Date(),
+            count: 1,
+          });
+          await newRecord.save();
+        }
+      } catch (logError) {
+        console.error("Error logging recent document:", logError);
+        // Don't fail the request if logging fails
+      }
     }
 
     // If it's a folder, fetch its contents

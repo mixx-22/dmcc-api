@@ -63,6 +63,7 @@ import roleRoutes from "./roles/role.route.js";
 import teamRoutes from "./teams/team.route.js";
 import documentRoutes from "./documents/document.route.js";
 import settingRoutes from "./systemSettings/settings.route.js";
+import recentDocsRoutes from "./logs/recentDocuments/recentDocs.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -70,5 +71,6 @@ app.use("/roles", roleRoutes);
 app.use("/teams", teamRoutes);
 app.use("/documents", documentRoutes);
 app.use("/settings", settingRoutes);
+app.use("/recent-documents", recentDocsRoutes);
 
 export default app;
