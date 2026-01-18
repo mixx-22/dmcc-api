@@ -1,14 +1,17 @@
 import { Settings } from "../systemSettings/settings.model.js";
+import { User } from "../users/user.model.js";
+import { Team } from "../teams/team.model.js";
+import mongoose from "mongoose";
 
 const postSetting = async (req, res) => {
   try {
     const { teamLeaderRole } = req.body;
 
     // Validate required fields
-    if (!teamLeaderRole || !Array.isArray(teamLeaderRole)) {
+    if (!teamLeaderRole || typeof teamLeaderRole !== "string") {
       return res.status(400).json({
         success: false,
-        message: "teamLeaderRole is required and must be an array",
+        message: "teamLeaderRole is required and must be a string",
       });
     }
 
@@ -20,22 +23,10 @@ const postSetting = async (req, res) => {
     // Save setting
     const savedSettings = await newSettings.save();
 
-    // Populate role information
-    await savedSettings.populate("teamLeaderRole", "_id title");
-
-    // Format teamLeaderRole with id and title
-    const formattedSettings = {
-      ...savedSettings.toObject(),
-      teamLeaderRole: savedSettings.teamLeaderRole.map((role) => ({
-        id: role._id,
-        title: role.title,
-      })),
-    };
-
     return res.status(201).json({
       success: true,
       message: "Setting created successfully",
-      data: formattedSettings,
+      data: savedSettings,
     });
   } catch (error) {
     console.error("Error in postSetting:", error);
@@ -71,10 +62,7 @@ const postSetting = async (req, res) => {
 const getSettings = async (req, res) => {
   try {
     // Find the most recent settings document
-    const settings = await Settings.findOne()
-      .sort({ createdAt: -1 })
-      .populate("teamLeaderRole", "_id title")
-      .lean();
+    const settings = await Settings.findOne().sort({ createdAt: -1 }).lean();
 
     if (!settings) {
       return res.status(404).json({
@@ -83,19 +71,10 @@ const getSettings = async (req, res) => {
       });
     }
 
-    // Format teamLeaderRole with id and title
-    const formattedSettings = {
-      ...settings,
-      teamLeaderRole: settings.teamLeaderRole.map((role) => ({
-        id: role._id,
-        title: role.title,
-      })),
-    };
-
     return res.status(200).json({
       success: true,
       message: "Settings retrieved successfully",
-      data: formattedSettings,
+      data: settings,
     });
   } catch (error) {
     console.error("Error in getSettings:", error);
@@ -108,4 +87,4 @@ const getSettings = async (req, res) => {
   }
 };
 
-export { postSetting, getSettings };
+export { postSetting, getSettings, updateSettings };
