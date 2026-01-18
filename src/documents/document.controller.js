@@ -246,15 +246,27 @@ const postDocument = async (req, res) => {
 
 const getDocuments = async (req, res) => {
   try {
-    const { keyword, folder, sortBy = "title", sortOrder = "asc" } = req.query;
+    const {
+      keyword,
+      folder,
+      type,
+      sortBy = "title",
+      sortOrder = "asc",
+    } = req.query;
 
     console.log("Received keyword:", keyword);
     console.log("Received folder:", folder);
+    console.log("Received type:", type);
     console.log("Full query params:", req.query);
 
     // Build the filter object
     let filter = { deletedAt: null };
     let folderInfo = null;
+
+    // Filter by type if provided
+    if (type) {
+      filter.type = type;
+    }
 
     if (folder) {
       // If folder is provided, get folder information
