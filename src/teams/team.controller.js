@@ -1,4 +1,7 @@
 import { Team } from "../teams/team.model.js";
+import { Settings } from "../systemSettings/settings.model.js";
+import { User } from "../users/user.model.js";
+import mongoose from "mongoose";
 
 const getFullName = (user) => {
   if (!user || typeof user !== "object") return null;
@@ -188,7 +191,69 @@ const updateTeam = async (req, res) => {
     }
 
     if (description !== undefined) existingTeam.description = description;
-    if (Array.isArray(leaders)) existingTeam.leaders = leaders;
+
+    // Handle leaders change and update user roles
+    if (Array.isArray(leaders)) {
+      // Get current teamLeaderRole from settings
+      const settings = await Settings.findOne().sort({ createdAt: -1 });
+      const teamLeaderRoleId = settings?.teamLeaderRole;
+
+      if (teamLeaderRoleId) {
+        // Get old and new leader IDs
+        const oldLeaderIds = existingTeam.leaders.map((id) => id.toString());
+        const newLeaderIds = leaders.map((id) => id.toString());
+
+        // Find leaders to remove (in old but not in new)
+        const leadersToRemove = oldLeaderIds.filter(
+          (id) => !newLeaderIds.includes(id),
+        );
+
+        // Find leaders to add (in new but not in old)
+        const leadersToAdd = newLeaderIds.filter(
+          (id) => !oldLeaderIds.includes(id),
+        );
+
+        // Remove teamLeaderRole from users who are no longer leaders
+        if (leadersToRemove.length > 0) {
+          await User.updateMany(
+            {
+              _id: {
+                $in: leadersToRemove.map(
+                  (id) => new mongoose.Types.ObjectId(id),
+                ),
+              },
+              deletedAt: null,
+            },
+            {
+              $pull: {
+                role: new mongoose.Types.ObjectId(teamLeaderRoleId),
+              },
+            },
+          );
+        }
+
+        // Add teamLeaderRole to users who are now leaders
+        if (leadersToAdd.length > 0) {
+          await User.updateMany(
+            {
+              _id: {
+                $in: leadersToAdd.map((id) => new mongoose.Types.ObjectId(id)),
+              },
+              role: { $ne: new mongoose.Types.ObjectId(teamLeaderRoleId) },
+              deletedAt: null,
+            },
+            {
+              $addToSet: {
+                role: new mongoose.Types.ObjectId(teamLeaderRoleId),
+              },
+            },
+          );
+        }
+      }
+
+      existingTeam.leaders = leaders;
+    }
+
     if (Array.isArray(members)) existingTeam.members = members;
     const creator = createdByBody ?? createdby;
     if (creator !== undefined) existingTeam.createdBy = creator;
