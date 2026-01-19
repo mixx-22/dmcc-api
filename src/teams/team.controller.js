@@ -1,7 +1,25 @@
 import { Team } from "../teams/team.model.js";
 import { Settings } from "../systemSettings/settings.model.js";
 import { User } from "../users/user.model.js";
+import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import mongoose from "mongoose";
+
+// Helper function to extract user data for audit trail
+const extractUserData = (req) => {
+  const user = req.user || {};
+  const userId = user._id?.toString() || user.id || "system";
+  const userName =
+    user.fullname ||
+    user.fullName ||
+    user.name ||
+    `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
+    "System";
+
+  return {
+    id: userId,
+    name: userName,
+  };
+};
 
 const getFullName = (user) => {
   if (!user || typeof user !== "object") return null;
@@ -75,6 +93,16 @@ const postTeam = async (req, res) => {
     const newTeam = new Team(teamData);
     await newTeam.save();
 
+    // Log to audit trail
+    await postAuditTrailLog(
+      "C",
+      newTeam._id.toString(),
+      "TEAMS",
+      `Team '${name}' created`,
+      extractUserData(req),
+      JSON.stringify({ name, members })
+    );
+
     return res.status(201).json({ message: "Team created", team: newTeam });
   } catch (err) {
     console.error("Team registration error:", err);
@@ -142,6 +170,15 @@ const getTeam = async (req, res) => {
     if (!data) {
       return res.status(404).json({ message: "Team not found." });
     }
+
+    // Log to audit trail
+    await postAuditTrailLog(
+      "R",
+      req.params.id,
+      "TEAMS",
+      `Team '${data.name}' accessed`,
+      extractUserData(req)
+    );
 
     const obj = data.toObject ? data.toObject() : { ...data };
     obj.createdBy = formatUserField(obj.createdBy);
@@ -263,6 +300,22 @@ const updateTeam = async (req, res) => {
 
     await existingTeam.save();
 
+    // Log to audit trail
+    const changes = {};
+    if (name !== undefined) changes.name = name;
+    if (description !== undefined) changes.description = description;
+    if (Array.isArray(leaders)) changes.leaders = { changed: true };
+    if (Array.isArray(members)) changes.members = { changed: true };
+
+    await postAuditTrailLog(
+      "U",
+      id,
+      "TEAMS",
+      `Team '${existingTeam.name}' updated`,
+      extractUserData(req),
+      JSON.stringify(changes)
+    );
+
     // return populated & formatted team (same format as getTeam)
     const data = await Team.findById(id).populate({
       path: "createdBy leaders members",
@@ -297,6 +350,16 @@ const deleteTeam = async (req, res) => {
 
     team.deletedAt = new Date();
     await team.save();
+
+    // Log to audit trail
+    await postAuditTrailLog(
+      "D",
+      id,
+      "TEAMS",
+      `Team '${team.name}' deleted`,
+      extractUserData(req),
+      JSON.stringify({ name: team.name, deletedAt: team.deletedAt })
+    );
 
     const data = await Team.findById(id).populate({
       path: "createdBy leaders members",
