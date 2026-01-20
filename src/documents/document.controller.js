@@ -106,14 +106,6 @@ const postDocument = async (req, res) => {
       });
     }
 
-    // Validate file is provided when type is "file"
-    if (type === "file" && !req.file) {
-      return res.status(400).json({
-        success: false,
-        message: "File is required when document type is 'file'",
-      });
-    }
-
     // Get owner from authenticated user
     const owner = req.user?._id || req.user?.id;
     if (!owner) {
@@ -155,39 +147,8 @@ const postDocument = async (req, res) => {
       }
     }
 
-    // Handle file upload for type "file"
+    // Use metadata as provided (expects key to be in metadata)
     let finalMetadata = metadata || {};
-    if (type === "file" && req.file) {
-      // Create uploads directory if it doesn't exist
-      const uploadsDir =
-        process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-
-      // Generate hash from file content
-      const fileBuffer = req.file.buffer;
-      const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
-
-      // Store file with hash as filename
-      const fileExtension = path.extname(req.file.originalname);
-      const storedFileName = `${hash}${fileExtension}`;
-      const filePath = path.join(uploadsDir, storedFileName);
-
-      // Write file to disk
-      fs.writeFileSync(filePath, fileBuffer);
-
-      // Merge existing metadata with file metadata
-      finalMetadata = {
-        ...finalMetadata,
-        key: hash,
-        fileName: req.file.originalname,
-        storedFileName: storedFileName,
-        filePath: filePath,
-        fileSize: req.file.size,
-        mimeType: req.file.mimetype,
-      };
-    }
 
     // Create new document
     const newDocument = new Document({
@@ -217,13 +178,15 @@ const postDocument = async (req, res) => {
       `Document created: ${savedDocument.title}`,
       {
         id: owner,
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : "Unknown User",
       },
       JSON.stringify({
         title: savedDocument.title,
         type: savedDocument.type,
-        fileName: finalMetadata?.storedFileName,
-      })
+        key: finalMetadata?.key,
+      }),
     );
 
     // Return without populating for now to isolate the issue
@@ -525,12 +488,14 @@ const getDocument = async (req, res) => {
       `Document accessed: ${document.title}`,
       {
         id: req.user?._id || req.user?.id || "Unknown",
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : "Unknown User",
       },
       JSON.stringify({
         documentTitle: document.title,
         documentType: document.type,
-      })
+      }),
     );
 
     return res.status(200).json({
@@ -583,13 +548,15 @@ const deleteDocument = async (req, res) => {
       `Document deleted: ${document.title}`,
       {
         id: req.user?._id || req.user?.id || "Unknown",
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : "Unknown User",
       },
       JSON.stringify({
         documentTitle: document.title,
         documentType: document.type,
         deletedAt: document.deletedAt,
-      })
+      }),
     );
 
     return res.status(200).json({
@@ -734,38 +701,6 @@ const updateDocument = async (req, res) => {
     if (metadata !== undefined)
       document.metadata = { ...document.metadata, ...metadata };
 
-    // Handle file upload if a new file is provided
-    if (req.file) {
-      const uploadsDir =
-        process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-
-      // Generate hash from file content
-      const fileBuffer = req.file.buffer;
-      const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
-
-      // Store file with hash as filename
-      const fileExtension = path.extname(req.file.originalname);
-      const storedFileName = `${hash}${fileExtension}`;
-      const filePath = path.join(uploadsDir, storedFileName);
-
-      // Write file to disk
-      fs.writeFileSync(filePath, fileBuffer);
-
-      // Update metadata with new file information
-      document.metadata = {
-        ...document.metadata,
-        key: hash,
-        fileName: req.file.originalname,
-        storedFileName: storedFileName,
-        filePath: filePath,
-        fileSize: req.file.size,
-        mimeType: req.file.mimetype,
-      };
-    }
-
     // Save updated document
     const updatedDocument = await document.save();
 
@@ -777,13 +712,15 @@ const updateDocument = async (req, res) => {
       `Document updated: ${updatedDocument.title}`,
       {
         id: req.user?._id || req.user?.id || "Unknown",
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : "Unknown User",
       },
       JSON.stringify({
         documentTitle: updatedDocument.title,
         documentType: updatedDocument.type,
         updatedFields: Object.keys(req.body),
-      })
+      }),
     );
 
     return res.status(200).json({
@@ -864,8 +801,10 @@ const downloadFile = async (req, res) => {
 
     // Log file download to audit trail - use a placeholder ID since we don't have document ID
     const userId = req.user?._id || req.user?.id;
-    const userName = req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User";
-    
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
     if (userId && userName !== "Unknown User") {
       await postAuditTrailLog(
         "R",
@@ -879,7 +818,7 @@ const downloadFile = async (req, res) => {
         JSON.stringify({
           fileName: downloadFileName,
           fileKey: key,
-        })
+        }),
       );
     }
 
@@ -907,6 +846,56 @@ const downloadFile = async (req, res) => {
   }
 };
 
+const uploadFile = async (req, res) => {
+  try {
+    // Check if file is provided
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "File is required",
+      });
+    }
+
+    // Create uploads directory if it doesn't exist
+    const uploadsDir =
+      process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    // Generate hash from file content
+    const fileBuffer = req.file.buffer;
+    const hash = crypto.createHash("sha256").update(fileBuffer).digest("hex");
+
+    // Store file with hash as filename
+    const fileExtension = path.extname(req.file.originalname);
+    const storedFileName = `${hash}${fileExtension}`;
+    const filePath = path.join(uploadsDir, storedFileName);
+
+    // Write file to disk
+    fs.writeFileSync(filePath, fileBuffer);
+
+    // Return file metadata
+    return res.status(200).json({
+      success: true,
+      message: "File uploaded successfully",
+      data: {
+        fileName: req.file.originalname,
+        size: req.file.size,
+        key: hash,
+      },
+    });
+  } catch (error) {
+    console.error("Error in uploadFile:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to upload file",
+      error: error.message,
+    });
+  }
+};
+
 export {
   postDocument,
   getDocuments,
@@ -914,4 +903,5 @@ export {
   updateDocument,
   deleteDocument,
   downloadFile,
+  uploadFile,
 };
