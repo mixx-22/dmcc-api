@@ -64,6 +64,7 @@ import teamRoutes from "./teams/team.route.js";
 import documentRoutes from "./documents/document.route.js";
 import settingRoutes from "./systemSettings/settings.route.js";
 import recentDocsRoutes from "./documentLogs/recentDocuments/recentDocs.route.js";
+import auditTrailRoutes from "./documentLogs/auditTrail/auditTrail.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -72,5 +73,6 @@ app.use("/teams", teamRoutes);
 app.use("/documents", documentRoutes);
 app.use("/settings", settingRoutes);
 app.use("/recent-documents", recentDocsRoutes);
+app.use("/audit-trails", auditTrailRoutes);
 
 export default app;

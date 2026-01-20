@@ -62,7 +62,7 @@ const postSetting = async (req, res) => {
 const getSettings = async (req, res) => {
   try {
     // Find the most recent settings document
-    const settings = await Settings.findOne().sort({ createdAt: -1 }).lean();
+    const settings = await Settings.findOne().sort({ createdAt: -1 });
 
     if (!settings) {
       return res.status(404).json({
@@ -71,10 +71,31 @@ const getSettings = async (req, res) => {
       });
     }
 
+    // Transform the response to include teamLeaderRole as an object with id and title
+    const { Role } = await import("../roles/role.model.js");
+    
+    let teamLeaderRole = {
+      id: "",
+      title: "",
+    };
+
+    if (settings.teamLeaderRole) {
+      const role = await Role.findById(settings.teamLeaderRole).select("_id title");
+      if (role) {
+        teamLeaderRole = {
+          id: role._id.toString(),
+          title: role.title,
+        };
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Settings retrieved successfully",
-      data: settings,
+      data: {
+        ...settings.toObject(),
+        teamLeaderRole,
+      },
     });
   } catch (error) {
     console.error("Error in getSettings:", error);
