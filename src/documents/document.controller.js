@@ -1,5 +1,6 @@
 import Document from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
+import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -207,6 +208,23 @@ const postDocument = async (req, res) => {
 
     // Save document
     const savedDocument = await newDocument.save();
+
+    // Log document creation to audit trail
+    await postAuditTrailLog(
+      "C",
+      savedDocument._id,
+      "DOCUMENTS",
+      `Document created: ${savedDocument.title}`,
+      {
+        id: owner,
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+      },
+      JSON.stringify({
+        title: savedDocument.title,
+        type: savedDocument.type,
+        fileName: finalMetadata?.storedFileName,
+      })
+    );
 
     // Return without populating for now to isolate the issue
     return res.status(201).json({
@@ -499,6 +517,22 @@ const getDocument = async (req, res) => {
       }
     }
 
+    // Log document retrieval to audit trail
+    await postAuditTrailLog(
+      "R",
+      document._id,
+      "DOCUMENTS",
+      `Document accessed: ${document.title}`,
+      {
+        id: req.user?._id || req.user?.id || "Unknown",
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+      },
+      JSON.stringify({
+        documentTitle: document.title,
+        documentType: document.type,
+      })
+    );
+
     return res.status(200).json({
       success: true,
       message: "Document retrieved successfully",
@@ -540,6 +574,23 @@ const deleteDocument = async (req, res) => {
     // Update deletedAt to current date (soft delete)
     document.deletedAt = new Date();
     await document.save();
+
+    // Log document deletion to audit trail
+    await postAuditTrailLog(
+      "D",
+      document._id,
+      "DOCUMENTS",
+      `Document deleted: ${document.title}`,
+      {
+        id: req.user?._id || req.user?.id || "Unknown",
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+      },
+      JSON.stringify({
+        documentTitle: document.title,
+        documentType: document.type,
+        deletedAt: document.deletedAt,
+      })
+    );
 
     return res.status(200).json({
       success: true,
@@ -718,6 +769,23 @@ const updateDocument = async (req, res) => {
     // Save updated document
     const updatedDocument = await document.save();
 
+    // Log document update to audit trail
+    await postAuditTrailLog(
+      "U",
+      updatedDocument._id,
+      "DOCUMENTS",
+      `Document updated: ${updatedDocument.title}`,
+      {
+        id: req.user?._id || req.user?.id || "Unknown",
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User",
+      },
+      JSON.stringify({
+        documentTitle: updatedDocument.title,
+        documentType: updatedDocument.type,
+        updatedFields: Object.keys(req.body),
+      })
+    );
+
     return res.status(200).json({
       success: true,
       message: "Document updated successfully",
@@ -793,6 +861,27 @@ const downloadFile = async (req, res) => {
 
     // Set the download filename - use provided fileName or original stored filename
     const downloadFileName = fileName || matchedFile;
+
+    // Log file download to audit trail - use a placeholder ID since we don't have document ID
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user ? `${req.user.firstName} ${req.user.lastName}` : "Unknown User";
+    
+    if (userId && userName !== "Unknown User") {
+      await postAuditTrailLog(
+        "R",
+        userId, // Use user ID as entity since we're downloading, not accessing a specific document
+        "DOCUMENTS",
+        `File downloaded: ${downloadFileName}`,
+        {
+          id: userId,
+          name: userName,
+        },
+        JSON.stringify({
+          fileName: downloadFileName,
+          fileKey: key,
+        })
+      );
+    }
 
     // Send file as download
     res.download(filePath, downloadFileName, (err) => {

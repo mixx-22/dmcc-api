@@ -20,8 +20,9 @@ const startServer = async () => {
       throw err;
     });
 
-    app.listen(process.env.PORT || 8000, () => {
-      console.log(`Server is running on port ${process.env.PORT || 8000}`);
+    const PORT = process.env.PORT || 8000;
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server is running on 0.0.0.0:${PORT} (accessible from network)`);
     });
   } catch (error) {
     console.log("Failed to start server:", error);

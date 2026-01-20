@@ -11,9 +11,10 @@ app.use((req, res, next) => {
 });
 
 const defaultOrigins = [
-  "http://localhost:3000",
   "http://localhost:4000",
-  "http://192.168.1.13:4000",
+  "http://localhost:5175",
+  "http://192.168.0.13:4000",
+  "http://192.168.0.13:5175",
 ];
 const allowedOrigins = (process.env.CLIENT_ORIGIN || defaultOrigins.join(","))
   .split(",")

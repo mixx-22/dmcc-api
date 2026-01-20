@@ -4,21 +4,32 @@ const postAuditTrailLog = async (action, entityId, module, summary, userData, lo
   try {
     // Validate required fields
     if (!action) {
-      console.error("Missing action for audit trail log");
+      console.error("[AUDIT TRAIL] Missing action for audit trail log");
       return null;
     }
     if (!entityId) {
-      console.error("Missing entityId for audit trail log");
+      console.error("[AUDIT TRAIL] Missing entityId for audit trail log");
       return null;
     }
     if (!module) {
-      console.error("Missing module for audit trail log");
+      console.error("[AUDIT TRAIL] Missing module for audit trail log");
       return null;
     }
     if (!userData || !userData.id || !userData.name) {
-      console.error("Missing or invalid userData for audit trail log", userData);
+      console.error("[AUDIT TRAIL] Missing or invalid userData for audit trail log", userData);
       return null;
     }
+
+    console.log("[AUDIT TRAIL] Creating audit log:", {
+      action,
+      entityId: entityId.toString(),
+      module,
+      summary,
+      userData: {
+        id: userData.id.toString(),
+        name: userData.name.toString(),
+      },
+    });
 
     // Create new audit trail record
     const auditLog = new AuditTrail({
@@ -35,11 +46,11 @@ const postAuditTrailLog = async (action, entityId, module, summary, userData, lo
 
     // Save audit log
     const savedLog = await auditLog.save();
-    console.log("Audit trail logged successfully:", savedLog._id);
+    console.log("[AUDIT TRAIL] Logged successfully:", savedLog._id);
     return savedLog;
   } catch (error) {
-    console.error("Error creating audit trail log:", error.message);
-    console.error("Error details:", error);
+    console.error("[AUDIT TRAIL] Error creating audit trail log:", error.message);
+    console.error("[AUDIT TRAIL] Error details:", error);
     // Don't throw error to prevent disrupting the main operation
     return null;
   }

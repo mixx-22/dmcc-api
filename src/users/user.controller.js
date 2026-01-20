@@ -4,6 +4,7 @@ import { Role } from "../roles/role.model.js";
 import { Team } from "../teams/team.model.js";
 import mongoose from "mongoose";
 import { generateKey } from "../utils/generateKey.js";
+import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 
 const resolveRoleTitles = async (role) => {
   if (!role) return null;
@@ -161,6 +162,24 @@ const registerUser = async (req, res) => {
 
     user.markModified("permissionsOverride");
     await user.save();
+
+    // Log user registration to audit trail
+    await postAuditTrailLog(
+      "C",
+      user._id,
+      "USERS",
+      `User registered: ${user.username}`,
+      {
+        id: user._id,
+        name: `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        employeeId: user.employeeId,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      })
+    );
 
     // Update role counter(s) when user is registered with roles
     if (role) {
@@ -509,6 +528,27 @@ const putUser = async (req, res) => {
 
     await user.save();
 
+    // Log user update to audit trail
+    const changedFields = Object.keys(req.body).filter(key => 
+      !["role", "team"].includes(key)
+    );
+    if (changedFields.length > 0 || "role" in req.body) {
+      await postAuditTrailLog(
+        "U",
+        user._id,
+        "USERS",
+        `User updated: ${user.username}`,
+        {
+          id: req.user?._id || req.user?.id || user._id,
+          name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+        },
+        JSON.stringify({
+          changedFields,
+          updatedValues: req.body,
+        })
+      );
+    }
+
     // Update role counters if roles were changed
     if ("role" in req.body) {
       const newRoles = user.role
@@ -619,6 +659,23 @@ const changePassword = async (req, res) => {
     user.password = newPassword;
     await user.save();
 
+    // Log password change to audit trail
+    await postAuditTrailLog(
+      "U",
+      user._id,
+      "USERS",
+      `Password changed for user: ${user.username}`,
+      {
+        id: id,
+        name: `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        userId: user._id,
+        username: user.username,
+        action: "password_change",
+      })
+    );
+
     res.status(200).json({ message: "Password changed successfully." });
   } catch (error) {
     res.status(500).json({ message: "Server error.", error: error.message });
@@ -658,6 +715,24 @@ const resetPassword = async (req, res) => {
     user.password = newPassword;
     await user.save();
 
+    // Log password reset to audit trail
+    await postAuditTrailLog(
+      "U",
+      user._id,
+      "USERS",
+      `Password reset for user: ${user.username}`,
+      {
+        id: req.user?._id || req.user?.id || id,
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        userId: user._id,
+        username: user.username,
+        action: "password_reset",
+        newPassword: newPassword,
+      })
+    );
+
     res.status(200).json({
       message: "Password generated and updated successfully.",
       userId: user._id,
@@ -694,6 +769,23 @@ const deleteUser = async (req, res) => {
 
     user.deletedAt = new Date();
     await user.save();
+
+    // Log user deletion to audit trail
+    await postAuditTrailLog(
+      "D",
+      user._id,
+      "USERS",
+      `User deleted: ${user.username}`,
+      {
+        id: req.user?._id || req.user?.id || user._id,
+        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        userId: user._id,
+        username: user.username,
+        email: user.email,
+      })
+    );
 
     if (userRoles.length > 0) {
       // Normalize and de-duplicate role ids
@@ -764,6 +856,23 @@ const loginUser = async (req, res) => {
 
     user.lastLoginAt = new Date();
     await user.save();
+
+    // Log user login to audit trail
+    await postAuditTrailLog(
+      "R",
+      user._id,
+      "USERS",
+      `User login: ${user.username}`,
+      {
+        id: user._id,
+        name: `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        username: user.username,
+        email: user.email,
+        loginAt: user.lastLoginAt,
+      })
+    );
 
     const payload = {
       id: String(user._id),
@@ -876,6 +985,22 @@ const logoutUser = async (req, res) => {
     if (!user) {
       return res.status(400).json({ message: "User not found." });
     }
+
+    // Log user logout to audit trail
+    await postAuditTrailLog(
+      "R",
+      user._id,
+      "USERS",
+      `User logout: ${user.username}`,
+      {
+        id: user._id,
+        name: `${user.firstName} ${user.lastName}`,
+      },
+      JSON.stringify({
+        username: user.username,
+        email: user.email,
+      })
+    );
 
     res.status(200).json({ message: "Logout successful." });
   } catch (error) {
