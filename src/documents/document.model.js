@@ -84,13 +84,19 @@ const documentSchema = new mongoose.Schema(
 
 // Pre-save middleware to set default title from filename for file type
 documentSchema.pre("save", function () {
-  if (
-    this.type === "file" &&
-    !this.title &&
-    this.metadata &&
-    this.metadata.filename
-  ) {
-    this.title = this.metadata.filename;
+  if (this.type === "file") {
+    // Set default title from filename if not provided
+    if (!this.title && this.metadata && this.metadata.filename) {
+      this.title = this.metadata.filename;
+    }
+
+    // Set default checkedOut value if not provided
+    if (!this.metadata) {
+      this.metadata = {};
+    }
+    if (this.metadata.checkedOut === undefined) {
+      this.metadata.checkedOut = 0;
+    }
   }
 });
 

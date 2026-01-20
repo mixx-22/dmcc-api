@@ -150,6 +150,11 @@ const postDocument = async (req, res) => {
     // Use metadata as provided (expects key to be in metadata)
     let finalMetadata = metadata || {};
 
+    // Set default checkedOut value for file type
+    if (type === "file" && finalMetadata.checkedOut === undefined) {
+      finalMetadata.checkedOut = 0;
+    }
+
     // Create new document
     const newDocument = new Document({
       title,
