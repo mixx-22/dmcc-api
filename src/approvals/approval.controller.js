@@ -16,7 +16,9 @@ const postApproval = async (req, res) => {
       otherRemarks,
       approvalDate_DEPARTMENT,
       approvalDate_CONTROLLER,
+      type,
       approvedBy,
+      publishedBy,
     } = req.body;
 
     // Validate required fields
@@ -42,7 +44,9 @@ const postApproval = async (req, res) => {
       otherRemarks,
       approvalDate_DEPARTMENT,
       approvalDate_CONTROLLER,
+      type,
       approvedBy,
+      publishedBy,
     });
 
     // Save to database
@@ -53,7 +57,8 @@ const postApproval = async (req, res) => {
       .populate("entityId")
       .populate("requestedBy")
       .populate("requestedFor")
-      .populate("approvedBy");
+      .populate("approvedBy")
+      .populate("publishedBy");
 
     return res.status(201).json({
       success: true,

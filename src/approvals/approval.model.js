@@ -76,7 +76,16 @@ const approvalSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    type: {
+      type: String,
+      default: "",
+    },
     approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    publishedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,

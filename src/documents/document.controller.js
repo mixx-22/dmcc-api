@@ -1,6 +1,7 @@
 import Document from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
+import Approval from "../approvals/approval.model.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -152,7 +153,7 @@ const postDocument = async (req, res) => {
 
     // Set default checkedOut value for file type
     if (type === "file" && finalMetadata.checkedOut === undefined) {
-      finalMetadata.checkedOut = 0;
+      finalMetadata.checkedOut = 1;
     }
 
     // Create new document
@@ -901,6 +902,604 @@ const uploadFile = async (req, res) => {
   }
 };
 
+const previewFile = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Get key from document metadata
+    const key = document.metadata?.key;
+    const fileName = document.metadata?.fileName || document.title;
+
+    // Validate required fields
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        message: "File key not found in document metadata",
+      });
+    }
+
+    // Get the uploads directory from env
+    const uploadsDir =
+      process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
+
+    // Find all files in the directory that start with the hash
+    const files = fs.readdirSync(uploadsDir);
+    const matchedFile = files.find((file) => file.startsWith(key));
+
+    if (!matchedFile) {
+      return res.status(404).json({
+        success: false,
+        message: "File not found",
+      });
+    }
+
+    const filePath = path.join(uploadsDir, matchedFile);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        message: "File not found",
+      });
+    }
+
+    // Get file extension
+    const fileExtension = path.extname(matchedFile).toLowerCase();
+
+    // Define allowed preview formats
+    const allowedFormats = [".pdf", ".jpg", ".jpeg", ".png", ".mp3", ".mp4"];
+
+    // Check if file format is supported for preview
+    if (!allowedFormats.includes(fileExtension)) {
+      return res.status(400).json({
+        success: false,
+        message: `Preview is not available for this file format. Only PDF, JPG, PNG, MP3, and MP4 files can be previewed.`,
+        fileFormat: fileExtension,
+        supportedFormats: allowedFormats,
+      });
+    }
+
+    // Set appropriate content type
+    let contentType;
+    switch (fileExtension) {
+      case ".pdf":
+        contentType = "application/pdf";
+        break;
+      case ".jpg":
+      case ".jpeg":
+        contentType = "image/jpeg";
+        break;
+      case ".png":
+        contentType = "image/png";
+        break;
+      case ".mp3":
+        contentType = "audio/mpeg";
+        break;
+      case ".mp4":
+        contentType = "video/mp4";
+        break;
+      default:
+        contentType = "application/octet-stream";
+    }
+
+    // Log file preview to audit trail
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    if (userId && userName !== "Unknown User") {
+      await postAuditTrailLog(
+        "R",
+        userId,
+        "DOCUMENTS",
+        `File previewed: ${fileName || matchedFile}`,
+        {
+          id: userId,
+          name: userName,
+        },
+        JSON.stringify({
+          fileName: fileName || matchedFile,
+          fileKey: key,
+          fileFormat: fileExtension,
+        }),
+      );
+    }
+
+    // Set headers for inline viewing
+    res.setHeader("Content-Type", contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${fileName || matchedFile}"`,
+    );
+
+    // Send file
+    res.sendFile(filePath);
+  } catch (error) {
+    console.error("Error in previewDocument:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to preview file",
+      error: error.message,
+    });
+  }
+};
+
+const submitDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Check if document is a file
+    if (document.type !== "file") {
+      return res.status(400).json({
+        success: false,
+        message: "Only file type documents can be submitted",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 1;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 0;
+
+    await document.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Create approval with type: "submit"
+    const newApproval = new Approval({
+      title: `Submission: ${document.title}`,
+      description: `Document submitted for approval`,
+      metadata: document.metadata,
+      entityId: document._id,
+      requestedBy: userId,
+      type: "submit",
+      status: 0, // Under Review
+    });
+
+    await newApproval.save();
+
+    // Log document submission to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document submitted: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 1,
+        checkedOut: 0,
+        approvalId: newApproval._id,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document submitted successfully",
+      data: {
+        document,
+        approval: newApproval,
+      },
+    });
+  } catch (error) {
+    console.error("Error in submitDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to submit document",
+      error: error.message,
+    });
+  }
+};
+
+const rejectDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approvalId } = req.body;
+
+    // Validate approvalId
+    if (!approvalId) {
+      return res.status(400).json({
+        success: false,
+        message: "Approval ID is required",
+      });
+    }
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Find the approval
+    const approval = await Approval.findById(approvalId);
+    if (!approval) {
+      return res.status(404).json({
+        success: false,
+        message: "Approval not found",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 0;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 1;
+
+    await document.save();
+
+    // Update approval
+    approval.type = "reject";
+    approval.mode = "Department";
+    approval.status = 2; // Rejected
+
+    await approval.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Log document rejection to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document rejected: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 0,
+        checkedOut: 1,
+        approvalId: approval._id,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document rejected successfully",
+      data: {
+        document,
+        approval,
+      },
+    });
+  } catch (error) {
+    console.error("Error in rejectDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reject document",
+      error: error.message,
+    });
+  }
+};
+
+const discardDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 0;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 0;
+
+    await document.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Log document discard to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document discarded: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 0,
+        checkedOut: 0,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document discarded successfully",
+      data: document,
+    });
+  } catch (error) {
+    console.error("Error in discardDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to discard document",
+      error: error.message,
+    });
+  }
+};
+
+const approveDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approvalId } = req.body;
+
+    // Validate approvalId
+    if (!approvalId) {
+      return res.status(400).json({
+        success: false,
+        message: "Approval ID is required",
+      });
+    }
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Find the approval
+    const approval = await Approval.findById(approvalId);
+    if (!approval) {
+      return res.status(404).json({
+        success: false,
+        message: "Approval not found",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 1;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 0;
+
+    await document.save();
+
+    // Update approval
+    approval.type = "approved";
+    approval.mode = "Document Controller";
+    approval.status = 0; // Under Review
+
+    await approval.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Log document approval to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document approved: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 1,
+        checkedOut: 0,
+        approvalId: approval._id,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document approved successfully",
+      data: {
+        document,
+        approval,
+      },
+    });
+  } catch (error) {
+    console.error("Error in approveDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to approve document",
+      error: error.message,
+    });
+  }
+};
+
+const publishDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { approvalId } = req.body;
+
+    // Validate approvalId
+    if (!approvalId) {
+      return res.status(400).json({
+        success: false,
+        message: "Approval ID is required",
+      });
+    }
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Find the approval
+    const approval = await Approval.findById(approvalId);
+    if (!approval) {
+      return res.status(404).json({
+        success: false,
+        message: "Approval not found",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 2;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 0;
+
+    await document.save();
+
+    // Update approval
+    approval.mode = "Document Controller";
+    approval.status = 1; // Approved
+
+    await approval.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Log document publication to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document published: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 2,
+        checkedOut: 0,
+        approvalId: approval._id,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document published successfully",
+      data: {
+        document,
+        approval,
+      },
+    });
+  } catch (error) {
+    console.error("Error in publishDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to publish document",
+      error: error.message,
+    });
+  }
+};
+
+const reviseDocument = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the document
+    const document = await Document.findById(id);
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: "Document not found",
+      });
+    }
+
+    // Update document status and metadata
+    document.status = 0;
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 1;
+
+    await document.save();
+
+    // Get user information
+    const userId = req.user?._id || req.user?.id;
+    const userName = req.user
+      ? `${req.user.firstName} ${req.user.lastName}`
+      : "Unknown User";
+
+    // Log document request to audit trail
+    await postAuditTrailLog(
+      "U",
+      document._id,
+      "DOCUMENTS",
+      `Document requested: ${document.title}`,
+      {
+        id: userId,
+        name: userName,
+      },
+      JSON.stringify({
+        status: 0,
+        checkedOut: 1,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Document requested successfully",
+      data: document,
+    });
+  } catch (error) {
+    console.error("Error in requestDocument:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to request document",
+      error: error.message,
+    });
+  }
+};
+
 export {
   postDocument,
   getDocuments,
@@ -909,4 +1508,11 @@ export {
   deleteDocument,
   downloadFile,
   uploadFile,
+  submitDocument,
+  rejectDocument,
+  discardDocument,
+  approveDocument,
+  publishDocument,
+  reviseDocument,
+  previewFile,
 };
