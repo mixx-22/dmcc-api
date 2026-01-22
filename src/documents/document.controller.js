@@ -2,6 +2,7 @@ import Document from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import Approval from "../approvals/approval.model.js";
+import { FileType } from "../fileType/fileType.model.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -154,6 +155,17 @@ const postDocument = async (req, res) => {
     // Set default checkedOut value for file type
     if (type === "file" && finalMetadata.checkedOut === undefined) {
       finalMetadata.checkedOut = 1;
+    }
+
+    // Set default fileType if not provided for file type
+    if (type === "file" && !finalMetadata.fileType) {
+      const defaultFileType = await FileType.findOne({
+        isDefault: true,
+        deletedAt: null,
+      });
+      if (defaultFileType) {
+        finalMetadata.fileType = defaultFileType._id;
+      }
     }
 
     // Create new document
@@ -704,8 +716,20 @@ const updateDocument = async (req, res) => {
     if (privacy !== undefined) document.privacy = privacy;
     if (permissionOverrides !== undefined)
       document.permissionOverrides = permissionOverrides;
-    if (metadata !== undefined)
+    if (metadata !== undefined) {
       document.metadata = { ...document.metadata, ...metadata };
+
+      // Set default fileType if type is file and fileType is not in metadata
+      if (document.type === "file" && !document.metadata.fileType) {
+        const defaultFileType = await FileType.findOne({
+          isDefault: true,
+          deletedAt: null,
+        });
+        if (defaultFileType) {
+          document.metadata.fileType = defaultFileType._id;
+        }
+      }
+    }
 
     // Save updated document
     const updatedDocument = await document.save();
@@ -1500,6 +1524,103 @@ const reviseDocument = async (req, res) => {
   }
 };
 
+const getQualityDocument = async (req, res) => {
+  try {
+    // pagination
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const maxLimit = 100;
+    let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
+    if (limit > maxLimit) limit = maxLimit;
+
+    // keyword search
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+
+    // First, get all FileTypes where isQualityDocument is true
+    const qualityFileTypes = await FileType.find({
+      isQualityDocument: true,
+      deletedAt: null,
+    }).select("_id");
+
+    const qualityFileTypeIds = qualityFileTypes.map((ft) => ft._id);
+
+    if (qualityFileTypeIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+        meta: { total: 0, page, limit, totalPages: 0 },
+      });
+    }
+
+    // Build filter for quality documents
+    const filter = {
+      type: "file",
+      "metadata.fileType": { $in: qualityFileTypeIds },
+      deletedAt: null,
+    };
+
+    // Add keyword search if provided
+    if (keyword) {
+      const re = new RegExp(keyword, "i");
+      filter.$or = [
+        { title: re },
+        { description: re },
+        { "metadata.filename": re },
+      ];
+    }
+
+    const total = await Document.countDocuments(filter);
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    const documents = await Document.find(filter)
+      .populate("owner", "firstName lastName email")
+      .populate("parentId", "title type")
+      .populate("privacy.users", "firstName lastName email")
+      .populate("privacy.teams", "name")
+      .populate("privacy.roles", "title")
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Manually populate fileType from metadata (since metadata is Mixed type)
+    const fileTypeIds = documents
+      .map((doc) => doc.metadata?.fileType)
+      .filter(Boolean);
+
+    const fileTypes = await FileType.find({
+      _id: { $in: fileTypeIds },
+    }).lean();
+
+    const fileTypeMap = new Map(fileTypes.map((ft) => [ft._id.toString(), ft]));
+
+    // Transform fileType in metadata to the desired structure
+    const data = documents.map((doc) => {
+      if (doc.metadata && doc.metadata.fileType) {
+        const fileTypeId = doc.metadata.fileType.toString();
+        const fileType = fileTypeMap.get(fileTypeId);
+        doc.metadata.fileType = {
+          id: fileTypeId,
+          type: fileType?.fileType || "",
+        };
+      }
+      return doc;
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+      meta: { total, page, limit, totalPages },
+    });
+  } catch (error) {
+    console.error("Error in getQualityDocument:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error.",
+      error: error.message,
+    });
+  }
+};
+
 export {
   postDocument,
   getDocuments,
@@ -1515,4 +1636,5 @@ export {
   publishDocument,
   reviseDocument,
   previewFile,
+  getQualityDocument,
 };

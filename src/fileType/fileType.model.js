@@ -2,7 +2,7 @@ import mongoose, { Schema } from "mongoose";
 
 const fileTypeSchema = new Schema(
   {
-    FileType: { type: String, default: "", trim: true },
+    fileType: { type: String, default: "", trim: true },
     isQualityDocument: { type: Boolean, default: false },
     requiresApproval: { type: Boolean, default: false },
     trackVersioning: { type: Boolean, default: false },
