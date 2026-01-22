@@ -66,6 +66,7 @@ import documentRoutes from "./documents/document.route.js";
 import settingRoutes from "./systemSettings/settings.route.js";
 import recentDocsRoutes from "./documentLogs/recentDocuments/recentDocs.route.js";
 import auditTrailRoutes from "./documentLogs/auditTrail/auditTrail.route.js";
+import fileTypeRoutes from "./fileType/fileType.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -75,5 +76,6 @@ app.use("/documents", documentRoutes);
 app.use("/settings", settingRoutes);
 app.use("/recent-documents", recentDocsRoutes);
 app.use("/audit-trails", auditTrailRoutes);
+app.use("/file-types", fileTypeRoutes);
 
 export default app;
