@@ -252,6 +252,9 @@ const getDocuments = async (req, res) => {
       type,
       sortBy = "title",
       sortOrder = "asc",
+      dateRange,
+      startDate,
+      endDate,
     } = req.query;
 
     console.log("Received keyword:", keyword);
@@ -262,6 +265,136 @@ const getDocuments = async (req, res) => {
     // Build the filter object
     let filter = { deletedAt: null };
     let folderInfo = null;
+
+    // Handle date range filtering
+    if (dateRange) {
+      console.log("Date range filter applied:", dateRange);
+      let dateFilter = {};
+      const now = new Date();
+
+      switch (dateRange) {
+        case "today":
+          const startOfToday = new Date();
+          startOfToday.setHours(0, 0, 0, 0);
+          const endOfToday = new Date();
+          endOfToday.setHours(23, 59, 59, 999);
+          dateFilter = {
+            createdAt: {
+              $gte: startOfToday,
+              $lte: endOfToday,
+            },
+          };
+          console.log("Today range:", { startOfToday, endOfToday });
+          break;
+
+        case "last7days":
+          const last7Days = new Date();
+          last7Days.setDate(last7Days.getDate() - 7);
+          last7Days.setHours(0, 0, 0, 0);
+          dateFilter = {
+            createdAt: { $gte: last7Days },
+          };
+          console.log("Last 7 days range from:", last7Days);
+          break;
+
+        case "last30days":
+          const last30Days = new Date();
+          last30Days.setDate(last30Days.getDate() - 30);
+          last30Days.setHours(0, 0, 0, 0);
+          dateFilter = {
+            createdAt: { $gte: last30Days },
+          };
+          console.log("Last 30 days range from:", last30Days);
+          break;
+
+        case "thisYear":
+          const startOfYear = new Date(
+            new Date().getFullYear(),
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+          );
+          dateFilter = {
+            createdAt: { $gte: startOfYear },
+          };
+          console.log("This year range from:", startOfYear);
+          break;
+
+        case "lastYear":
+          const currentYear = new Date().getFullYear();
+          const startOfLastYear = new Date(currentYear - 1, 0, 1, 0, 0, 0, 0);
+          const endOfLastYear = new Date(
+            currentYear - 1,
+            11,
+            31,
+            23,
+            59,
+            59,
+            999,
+          );
+          dateFilter = {
+            createdAt: {
+              $gte: startOfLastYear,
+              $lte: endOfLastYear,
+            },
+          };
+          console.log("Last year range:", { startOfLastYear, endOfLastYear });
+          break;
+
+        case "custom":
+          console.log("Custom date range requested:", { startDate, endDate });
+          if (!startDate || !endDate) {
+            return res.status(400).json({
+              success: false,
+              message:
+                "startDate and endDate are required for custom date range",
+            });
+          }
+
+          const customStart = new Date(startDate);
+          const customEnd = new Date(endDate);
+
+          if (isNaN(customStart.getTime()) || isNaN(customEnd.getTime())) {
+            return res.status(400).json({
+              success: false,
+              message: "Invalid date format. Use YYYY-MM-DD format",
+            });
+          }
+
+          if (customStart > customEnd) {
+            return res.status(400).json({
+              success: false,
+              message: "startDate must be before or equal to endDate",
+            });
+          }
+
+          customStart.setHours(0, 0, 0, 0);
+          customEnd.setHours(23, 59, 59, 999);
+
+          dateFilter = {
+            createdAt: {
+              $gte: customStart,
+              $lte: customEnd,
+            },
+          };
+          console.log("Custom range applied:", { customStart, customEnd });
+          break;
+
+        default:
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid dateRange. Use: today, last7days, last30days, thisYear, lastYear, or custom",
+          });
+      }
+
+      // Merge date filter with main filter
+      filter = { ...filter, ...dateFilter };
+      console.log("Date filter applied:", dateFilter);
+    }
 
     // Filter by type if provided
     if (type) {
@@ -328,6 +461,7 @@ const getDocuments = async (req, res) => {
       filter.parentId = null;
     }
 
+    console.log("Final filter before query:", JSON.stringify(filter, null, 2));
     console.log("Filter being used:", JSON.stringify(filter, null, 2));
 
     // Build sort object - folders first, then by specified field
@@ -358,6 +492,48 @@ const getDocuments = async (req, res) => {
       if (aValue < bValue) return sortDirection;
       if (aValue > bValue) return -sortDirection;
       return 0;
+    });
+
+    // Collect unique fileType IDs from file documents
+    const fileTypeIds = [
+      ...new Set(
+        documents
+          .filter((doc) => doc.type === "file" && doc.metadata?.fileType)
+          .map((doc) => doc.metadata.fileType.toString()),
+      ),
+    ];
+
+    // Fetch all fileTypes in one query
+    let fileTypesMap = {};
+    if (fileTypeIds.length > 0) {
+      const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
+        .select("_id fileType")
+        .lean();
+
+      fileTypes.forEach((ft) => {
+        fileTypesMap[ft._id.toString()] = ft;
+      });
+    }
+
+    // Transform fileType for file documents
+    documents = documents.map((doc) => {
+      if (doc.type === "file" && doc.metadata?.fileType) {
+        const fileTypeId = doc.metadata.fileType.toString();
+        const fileTypeData = fileTypesMap[fileTypeId];
+
+        if (fileTypeData) {
+          doc.metadata.fileType = {
+            id: fileTypeData._id,
+            name: fileTypeData.fileType || "",
+          };
+        } else {
+          doc.metadata.fileType = {
+            id: fileTypeId,
+            name: "",
+          };
+        }
+      }
+      return doc;
     });
 
     // Prepare response data
@@ -462,6 +638,26 @@ const getDocument = async (req, res) => {
     // If it's a folder, fetch its contents
     let responseData = document.toObject();
 
+    // Transform fileType for file documents
+    if (document.type === "file" && responseData.metadata?.fileType) {
+      const fileTypeId = responseData.metadata.fileType.toString();
+      const fileTypeData = await FileType.findById(fileTypeId)
+        .select("_id fileType")
+        .lean();
+
+      if (fileTypeData) {
+        responseData.metadata.fileType = {
+          id: fileTypeData._id,
+          name: fileTypeData.fileType || "",
+        };
+      } else {
+        responseData.metadata.fileType = {
+          id: fileTypeId,
+          name: "",
+        };
+      }
+    }
+
     if (document.type === "folder") {
       const children = await Document.find({
         parentId: document._id,
@@ -473,7 +669,51 @@ const getDocument = async (req, res) => {
         .populate("privacy.roles", "title")
         .lean();
 
-      responseData.children = children;
+      // Collect unique fileType IDs from file children
+      const fileTypeIds = [
+        ...new Set(
+          children
+            .filter(
+              (child) => child.type === "file" && child.metadata?.fileType,
+            )
+            .map((child) => child.metadata.fileType.toString()),
+        ),
+      ];
+
+      // Fetch all fileTypes in one query
+      let fileTypesMap = {};
+      if (fileTypeIds.length > 0) {
+        const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
+          .select("_id fileType")
+          .lean();
+
+        fileTypes.forEach((ft) => {
+          fileTypesMap[ft._id.toString()] = ft;
+        });
+      }
+
+      // Transform fileType for file children
+      const transformedChildren = children.map((child) => {
+        if (child.type === "file" && child.metadata?.fileType) {
+          const fileTypeId = child.metadata.fileType.toString();
+          const fileTypeData = fileTypesMap[fileTypeId];
+
+          if (fileTypeData) {
+            child.metadata.fileType = {
+              id: fileTypeData._id,
+              name: fileTypeData.fileType || "",
+            };
+          } else {
+            child.metadata.fileType = {
+              id: fileTypeId,
+              name: "",
+            };
+          }
+        }
+        return child;
+      });
+
+      responseData.children = transformedChildren;
     }
 
     // If document has a parent, fetch parent information

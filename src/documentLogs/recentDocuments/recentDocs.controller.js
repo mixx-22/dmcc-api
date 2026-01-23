@@ -94,7 +94,18 @@ const postRecentDocsLog = async (req, res) => {
 
 const getRecentDocsLog = async (req, res) => {
   try {
-    const { type } = req.query;
+    const { type, page = 1, limit = 10 } = req.query;
+
+    // Parse and validate pagination parameters
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+
+    if (pageNum < 1 || limitNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Page and limit must be positive numbers",
+      });
+    }
 
     // Build filter
     const filter = {};
@@ -102,11 +113,19 @@ const getRecentDocsLog = async (req, res) => {
       filter.documentType = type;
     }
 
-    // Find all recent document logs with filter
+    // Calculate skip value for pagination
+    const skip = (pageNum - 1) * limitNum;
+
+    // Get total count for pagination metadata
+    const totalCount = await RecentDocs.countDocuments(filter);
+
+    // Find recent document logs with filter and pagination
     const logs = await RecentDocs.find(filter)
       .populate("userId", "firstName lastName")
       .populate("documentId", "title type")
       .sort({ accessedAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
       .lean();
 
     // Format the response
@@ -127,10 +146,23 @@ const getRecentDocsLog = async (req, res) => {
       count: log.count,
     }));
 
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
     return res.status(200).json({
       success: true,
       message: "Recent document logs retrieved successfully",
       data: formattedLogs,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalCount,
+        limit: limitNum,
+        hasNextPage,
+        hasPrevPage,
+      },
     });
   } catch (error) {
     console.error("Error in getRecentDocsLog:", error);
