@@ -3,30 +3,26 @@ import { FileType } from "./fileType.model.js";
 const postFileType = async (req, res) => {
   try {
     const {
-      FileType: fileTypeName,
+      name,
       isQualityDocument,
       requiresApproval,
       trackVersioning,
       isDefault,
     } = req.body;
 
-    if (
-      !fileTypeName ||
-      typeof fileTypeName !== "string" ||
-      !fileTypeName.trim()
-    ) {
-      return res.status(400).json({ message: "FileType is required." });
+    if (!name || typeof name !== "string" || !name.trim()) {
+      return res.status(400).json({ message: "Name is required." });
     }
 
     const existingFileType = await FileType.findOne({
-      FileType: fileTypeName.trim(),
+      name: name.trim(),
     });
     if (existingFileType) {
       return res.status(400).json({ message: "FileType already exists." });
     }
 
     const fileType = await FileType.create({
-      FileType: fileTypeName.trim(),
+      name: name.trim(),
       isQualityDocument,
       requiresApproval,
       trackVersioning,
@@ -37,7 +33,7 @@ const postFileType = async (req, res) => {
       message: "FileType created successfully.",
       fileType: {
         id: fileType._id,
-        FileType: fileType.FileType,
+        name: fileType.name,
         isQualityDocument: fileType.isQualityDocument,
         requiresApproval: fileType.requiresApproval,
         trackVersioning: fileType.trackVersioning,
@@ -62,7 +58,7 @@ const getAllFileType = async (req, res) => {
     const filter = { deletedAt: null };
     if (keyword) {
       const re = new RegExp(keyword, "i");
-      filter.FileType = re;
+      filter.name = re;
     }
 
     const total = await FileType.countDocuments(filter);

@@ -7,6 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import mongoose from "mongoose";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -499,7 +500,21 @@ const getDocuments = async (req, res) => {
       ...new Set(
         documents
           .filter((doc) => doc.type === "file" && doc.metadata?.fileType)
-          .map((doc) => doc.metadata.fileType.toString()),
+          .map((doc) => {
+            const fileType = doc.metadata.fileType;
+            let id;
+
+            // Check if it's already an object with id property
+            if (typeof fileType === "object" && fileType.id) {
+              id = fileType.id.toString();
+            } else {
+              id = fileType.toString();
+            }
+
+            // Validate ObjectId format
+            return mongoose.Types.ObjectId.isValid(id) ? id : null;
+          })
+          .filter((id) => id !== null), // Remove invalid IDs
       ),
     ];
 
@@ -507,7 +522,7 @@ const getDocuments = async (req, res) => {
     let fileTypesMap = {};
     if (fileTypeIds.length > 0) {
       const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
-        .select("_id fileType")
+        .select("_id name")
         .lean();
 
       fileTypes.forEach((ft) => {
@@ -518,17 +533,35 @@ const getDocuments = async (req, res) => {
     // Transform fileType for file documents
     documents = documents.map((doc) => {
       if (doc.type === "file" && doc.metadata?.fileType) {
-        const fileTypeId = doc.metadata.fileType.toString();
-        const fileTypeData = fileTypesMap[fileTypeId];
+        const fileType = doc.metadata.fileType;
+        let fileTypeId;
 
-        if (fileTypeData) {
-          doc.metadata.fileType = {
-            id: fileTypeData._id,
-            name: fileTypeData.fileType || "",
-          };
+        // Check if it's already an object with id property
+        if (typeof fileType === "object" && fileType.id) {
+          fileTypeId = fileType.id.toString();
         } else {
+          fileTypeId = fileType.toString();
+        }
+
+        // Only transform if it's a valid ObjectId
+        if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+          const fileTypeData = fileTypesMap[fileTypeId];
+
+          if (fileTypeData) {
+            doc.metadata.fileType = {
+              id: fileTypeData._id,
+              name: fileTypeData.name || "",
+            };
+          } else {
+            doc.metadata.fileType = {
+              id: fileTypeId,
+              name: "",
+            };
+          }
+        } else {
+          // If invalid, set to null or empty object
           doc.metadata.fileType = {
-            id: fileTypeId,
+            id: null,
             name: "",
           };
         }
@@ -640,19 +673,37 @@ const getDocument = async (req, res) => {
 
     // Transform fileType for file documents
     if (document.type === "file" && responseData.metadata?.fileType) {
-      const fileTypeId = responseData.metadata.fileType.toString();
-      const fileTypeData = await FileType.findById(fileTypeId)
-        .select("_id fileType")
-        .lean();
+      const fileType = responseData.metadata.fileType;
+      let fileTypeId;
 
-      if (fileTypeData) {
-        responseData.metadata.fileType = {
-          id: fileTypeData._id,
-          name: fileTypeData.fileType || "",
-        };
+      // Check if it's already an object with id property
+      if (typeof fileType === "object" && fileType.id) {
+        fileTypeId = fileType.id.toString();
       } else {
+        fileTypeId = fileType.toString();
+      }
+
+      // Only query if it's a valid ObjectId
+      if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+        const fileTypeData = await FileType.findById(fileTypeId)
+          .select("_id name")
+          .lean();
+
+        if (fileTypeData) {
+          responseData.metadata.fileType = {
+            id: fileTypeData._id,
+            name: fileTypeData.name || "",
+          };
+        } else {
+          responseData.metadata.fileType = {
+            id: fileTypeId,
+            name: "",
+          };
+        }
+      } else {
+        // Invalid ObjectId, set to null
         responseData.metadata.fileType = {
-          id: fileTypeId,
+          id: null,
           name: "",
         };
       }
@@ -676,7 +727,21 @@ const getDocument = async (req, res) => {
             .filter(
               (child) => child.type === "file" && child.metadata?.fileType,
             )
-            .map((child) => child.metadata.fileType.toString()),
+            .map((child) => {
+              const fileType = child.metadata.fileType;
+              let id;
+
+              // Check if it's already an object with id property
+              if (typeof fileType === "object" && fileType.id) {
+                id = fileType.id.toString();
+              } else {
+                id = fileType.toString();
+              }
+
+              // Validate ObjectId format
+              return mongoose.Types.ObjectId.isValid(id) ? id : null;
+            })
+            .filter((id) => id !== null), // Remove invalid IDs
         ),
       ];
 
@@ -684,7 +749,7 @@ const getDocument = async (req, res) => {
       let fileTypesMap = {};
       if (fileTypeIds.length > 0) {
         const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
-          .select("_id fileType")
+          .select("_id name")
           .lean();
 
         fileTypes.forEach((ft) => {
@@ -695,17 +760,35 @@ const getDocument = async (req, res) => {
       // Transform fileType for file children
       const transformedChildren = children.map((child) => {
         if (child.type === "file" && child.metadata?.fileType) {
-          const fileTypeId = child.metadata.fileType.toString();
-          const fileTypeData = fileTypesMap[fileTypeId];
+          const fileType = child.metadata.fileType;
+          let fileTypeId;
 
-          if (fileTypeData) {
-            child.metadata.fileType = {
-              id: fileTypeData._id,
-              name: fileTypeData.fileType || "",
-            };
+          // Check if it's already an object with id property
+          if (typeof fileType === "object" && fileType.id) {
+            fileTypeId = fileType.id.toString();
           } else {
+            fileTypeId = fileType.toString();
+          }
+
+          // Only transform if it's a valid ObjectId
+          if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+            const fileTypeData = fileTypesMap[fileTypeId];
+
+            if (fileTypeData) {
+              child.metadata.fileType = {
+                id: fileTypeData._id,
+                name: fileTypeData.name || "",
+              };
+            } else {
+              child.metadata.fileType = {
+                id: fileTypeId,
+                name: "",
+              };
+            }
+          } else {
+            // Invalid ObjectId, set to null
             child.metadata.fileType = {
-              id: fileTypeId,
+              id: null,
               name: "",
             };
           }
@@ -876,38 +959,60 @@ const updateDocument = async (req, res) => {
     }
 
     if (req.body.permissionOverrides) {
-      try {
-        permissionOverrides = JSON.parse(req.body.permissionOverrides);
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid JSON format for 'permissionOverrides' field",
-          error: error.message,
-        });
+      if (typeof req.body.permissionOverrides === "string") {
+        try {
+          permissionOverrides = JSON.parse(req.body.permissionOverrides);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Invalid JSON format for \'permissionOverrides\' field. Example: {"readOnly":1,"restricted":1}',
+            error: error.message,
+          });
+        }
+      } else {
+        permissionOverrides = req.body.permissionOverrides;
       }
     }
 
     if (req.body.metadata) {
-      try {
-        metadata = JSON.parse(req.body.metadata);
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid JSON format for 'metadata' field",
-          error: error.message,
-        });
+      if (typeof req.body.metadata === "string") {
+        try {
+          metadata = JSON.parse(req.body.metadata);
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid JSON format for 'metadata' field",
+            error: error.message,
+          });
+        }
+      } else {
+        metadata = req.body.metadata;
       }
     }
 
-    if (req.body.path) {
-      try {
-        docPath = JSON.parse(req.body.path);
-      } catch (error) {
+    if (req.body.path !== undefined) {
+      if (Array.isArray(req.body.path)) {
+        docPath = req.body.path;
+      } else if (typeof req.body.path === "string") {
+        if (req.body.path.startsWith("[")) {
+          try {
+            docPath = JSON.parse(req.body.path);
+          } catch (error) {
+            return res.status(400).json({
+              success: false,
+              message:
+                "Invalid JSON format for 'path' field. Path should be an array like []",
+              error: error.message,
+            });
+          }
+        } else {
+          docPath = req.body.path ? [req.body.path] : [];
+        }
+      } else {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid JSON format for 'path' field. Path should be an array.",
-          error: error.message,
+          message: "Path should be an array.",
         });
       }
     }
@@ -1792,20 +1897,41 @@ const getQualityDocument = async (req, res) => {
     }
 
     // Build filter for quality documents
+    // Handle both ObjectId and string formats for fileType
+    const qualityFileTypeIdsStrings = qualityFileTypeIds.map((id) =>
+      id.toString(),
+    );
+
     const filter = {
       type: "file",
-      "metadata.fileType": { $in: qualityFileTypeIds },
       deletedAt: null,
+    };
+
+    // Add fileType filter with $or to handle both ObjectId and string
+    const fileTypeFilter = {
+      $or: [
+        { "metadata.fileType": { $in: qualityFileTypeIds } },
+        { "metadata.fileType": { $in: qualityFileTypeIdsStrings } },
+      ],
     };
 
     // Add keyword search if provided
     if (keyword) {
       const re = new RegExp(keyword, "i");
-      filter.$or = [
-        { title: re },
-        { description: re },
-        { "metadata.filename": re },
+      // Combine fileType filter with keyword search
+      filter.$and = [
+        fileTypeFilter,
+        {
+          $or: [
+            { title: re },
+            { description: re },
+            { "metadata.filename": re },
+          ],
+        },
       ];
+    } else {
+      // Just use fileType filter
+      Object.assign(filter, fileTypeFilter);
     }
 
     const total = await Document.countDocuments(filter);
@@ -1840,7 +1966,7 @@ const getQualityDocument = async (req, res) => {
         const fileType = fileTypeMap.get(fileTypeId);
         doc.metadata.fileType = {
           id: fileTypeId,
-          type: fileType?.fileType || "",
+          name: fileType?.name || "",
         };
       }
       return doc;
