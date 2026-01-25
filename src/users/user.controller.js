@@ -163,6 +163,14 @@ const registerUser = async (req, res) => {
     user.markModified("permissionsOverride");
     await user.save();
 
+    // Create TeamStat for the new user
+    try {
+      await createTeamStatForUser(user._id);
+    } catch (statError) {
+      console.error("Error creating team stat for user:", statError);
+      // Don't fail user registration if stat creation fails
+    }
+
     // Log user registration to audit trail
     await postAuditTrailLog(
       "C",
@@ -178,7 +186,7 @@ const registerUser = async (req, res) => {
         username: user.username,
         email: user.email,
         role: user.role,
-      })
+      }),
     );
 
     // Update role counter(s) when user is registered with roles
@@ -529,8 +537,8 @@ const putUser = async (req, res) => {
     await user.save();
 
     // Log user update to audit trail
-    const changedFields = Object.keys(req.body).filter(key => 
-      !["role", "team"].includes(key)
+    const changedFields = Object.keys(req.body).filter(
+      (key) => !["role", "team"].includes(key),
     );
     if (changedFields.length > 0 || "role" in req.body) {
       await postAuditTrailLog(
@@ -540,12 +548,14 @@ const putUser = async (req, res) => {
         `User updated: ${user.username}`,
         {
           id: req.user?._id || req.user?.id || user._id,
-          name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+          name: req.user
+            ? `${req.user.firstName} ${req.user.lastName}`
+            : `${user.firstName} ${user.lastName}`,
         },
         JSON.stringify({
           changedFields,
           updatedValues: req.body,
-        })
+        }),
       );
     }
 
@@ -673,7 +683,7 @@ const changePassword = async (req, res) => {
         userId: user._id,
         username: user.username,
         action: "password_change",
-      })
+      }),
     );
 
     res.status(200).json({ message: "Password changed successfully." });
@@ -723,14 +733,16 @@ const resetPassword = async (req, res) => {
       `Password reset for user: ${user.username}`,
       {
         id: req.user?._id || req.user?.id || id,
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : `${user.firstName} ${user.lastName}`,
       },
       JSON.stringify({
         userId: user._id,
         username: user.username,
         action: "password_reset",
         newPassword: newPassword,
-      })
+      }),
     );
 
     res.status(200).json({
@@ -778,13 +790,15 @@ const deleteUser = async (req, res) => {
       `User deleted: ${user.username}`,
       {
         id: req.user?._id || req.user?.id || user._id,
-        name: req.user ? `${req.user.firstName} ${req.user.lastName}` : `${user.firstName} ${user.lastName}`,
+        name: req.user
+          ? `${req.user.firstName} ${req.user.lastName}`
+          : `${user.firstName} ${user.lastName}`,
       },
       JSON.stringify({
         userId: user._id,
         username: user.username,
         email: user.email,
-      })
+      }),
     );
 
     if (userRoles.length > 0) {
@@ -871,7 +885,7 @@ const loginUser = async (req, res) => {
         username: user.username,
         email: user.email,
         loginAt: user.lastLoginAt,
-      })
+      }),
     );
 
     const payload = {
@@ -999,7 +1013,7 @@ const logoutUser = async (req, res) => {
       JSON.stringify({
         username: user.username,
         email: user.email,
-      })
+      }),
     );
 
     res.status(200).json({ message: "Logout successful." });

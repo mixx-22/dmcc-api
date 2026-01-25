@@ -3,6 +3,10 @@ import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js"
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import Approval from "../approvals/approval.model.js";
 import { FileType } from "../fileType/fileType.model.js";
+import {
+  putFileTeamStat,
+  removeFileTeamStat,
+} from "../teams/team-stat/teamstat.controller.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -207,6 +211,22 @@ const postDocument = async (req, res) => {
         key: finalMetadata?.key,
       }),
     );
+
+    // Add document to team stats if privacy.teams exists
+    if (
+      savedDocument.privacy &&
+      savedDocument.privacy.teams &&
+      savedDocument.privacy.teams.length > 0
+    ) {
+      try {
+        for (const teamId of savedDocument.privacy.teams) {
+          await putFileTeamStat(teamId, savedDocument._id);
+        }
+      } catch (error) {
+        console.error("Error updating team stats:", error);
+        // Don't fail the request if team stat update fails
+      }
+    }
 
     // Return without populating for now to isolate the issue
     return res.status(201).json({
@@ -686,18 +706,24 @@ const getDocument = async (req, res) => {
       // Only query if it's a valid ObjectId
       if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
         const fileTypeData = await FileType.findById(fileTypeId)
-          .select("_id name")
+          .select("_id name isQualityDocument requiresApproval trackVersioning")
           .lean();
 
         if (fileTypeData) {
           responseData.metadata.fileType = {
             id: fileTypeData._id,
             name: fileTypeData.name || "",
+            isQualityDocument: fileTypeData.isQualityDocument || false,
+            requiresApproval: fileTypeData.requiresApproval || false,
+            trackVersioning: fileTypeData.trackVersioning || false,
           };
         } else {
           responseData.metadata.fileType = {
             id: fileTypeId,
             name: "",
+            isQualityDocument: false,
+            requiresApproval: false,
+            trackVersioning: false,
           };
         }
       } else {
@@ -705,6 +731,9 @@ const getDocument = async (req, res) => {
         responseData.metadata.fileType = {
           id: null,
           name: "",
+          isQualityDocument: false,
+          requiresApproval: false,
+          trackVersioning: false,
         };
       }
     }
@@ -749,7 +778,7 @@ const getDocument = async (req, res) => {
       let fileTypesMap = {};
       if (fileTypeIds.length > 0) {
         const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
-          .select("_id name")
+          .select("_id name isQualityDocument requiresApproval trackVersioning")
           .lean();
 
         fileTypes.forEach((ft) => {
@@ -778,11 +807,17 @@ const getDocument = async (req, res) => {
               child.metadata.fileType = {
                 id: fileTypeData._id,
                 name: fileTypeData.name || "",
+                isQualityDocument: fileTypeData.isQualityDocument || false,
+                requiresApproval: fileTypeData.requiresApproval || false,
+                trackVersioning: fileTypeData.trackVersioning || false,
               };
             } else {
               child.metadata.fileType = {
                 id: fileTypeId,
                 name: "",
+                isQualityDocument: false,
+                requiresApproval: false,
+                trackVersioning: false,
               };
             }
           } else {
@@ -790,6 +825,9 @@ const getDocument = async (req, res) => {
             child.metadata.fileType = {
               id: null,
               name: "",
+              isQualityDocument: false,
+              requiresApproval: false,
+              trackVersioning: false,
             };
           }
         }
@@ -1019,6 +1057,10 @@ const updateDocument = async (req, res) => {
 
     const { title, description, type, status, parentId } = req.body;
 
+    // Capture old teams BEFORE updating document (for team stat tracking)
+    const oldTeamIds =
+      document.privacy?.teams?.map((id) => id.toString()) || [];
+
     // Update fields if provided
     if (title !== undefined) document.title = title;
     if (description !== undefined) document.description = description;
@@ -1097,6 +1139,45 @@ const updateDocument = async (req, res) => {
         updatedFields: Object.keys(req.body),
       }),
     );
+
+    // Update team stats if privacy.teams was changed
+    if (privacy !== undefined) {
+      try {
+        // Use the old teams captured before update
+        const newTeamIds =
+          updatedDocument.privacy?.teams?.map((id) => id.toString()) || [];
+
+        // Find teams to add (in new but not in old)
+        const teamsToAdd = newTeamIds.filter(
+          (teamId) => !oldTeamIds.includes(teamId),
+        );
+
+        // Find teams to remove (in old but not in new)
+        const teamsToRemove = oldTeamIds.filter(
+          (teamId) => !newTeamIds.includes(teamId),
+        );
+
+        console.log(`[updateDocument] Old teams: ${oldTeamIds.join(", ")}`);
+        console.log(`[updateDocument] New teams: ${newTeamIds.join(", ")}`);
+        console.log(`[updateDocument] Teams to add: ${teamsToAdd.join(", ")}`);
+        console.log(
+          `[updateDocument] Teams to remove: ${teamsToRemove.join(", ")}`,
+        );
+
+        // Add document to new teams
+        for (const teamId of teamsToAdd) {
+          await putFileTeamStat(teamId, updatedDocument._id);
+        }
+
+        // Remove document from removed teams
+        for (const teamId of teamsToRemove) {
+          await removeFileTeamStat(teamId, updatedDocument._id);
+        }
+      } catch (error) {
+        console.error("Error updating team stats:", error);
+        // Don't fail the request if team stat update fails
+      }
+    }
 
     return res.status(200).json({
       success: true,

@@ -2,6 +2,7 @@ import { Team } from "../teams/team.model.js";
 import { Settings } from "../systemSettings/settings.model.js";
 import { User } from "../users/user.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
+import { createTeamStat } from "./team-stat/teamstat.controller.js";
 import mongoose from "mongoose";
 
 // Helper function to extract user data for audit trail
@@ -93,6 +94,19 @@ const postTeam = async (req, res) => {
     const newTeam = new Team(teamData);
     await newTeam.save();
 
+    console.log(`[postTeam] Team created with ID: ${newTeam._id}`);
+
+    // Create TeamStat for the new team
+    try {
+      console.log(`[postTeam] Calling createTeamStat for team ${newTeam._id}`);
+      await createTeamStat(newTeam._id);
+      console.log(`[postTeam] TeamStat created successfully`);
+    } catch (statError) {
+      console.error("[postTeam] Error creating team stat:", statError);
+      console.error("[postTeam] Error stack:", statError.stack);
+      // Don't fail team creation if stat creation fails
+    }
+
     // Log to audit trail
     await postAuditTrailLog(
       "C",
@@ -100,7 +114,7 @@ const postTeam = async (req, res) => {
       "TEAMS",
       `Team '${name}' created`,
       extractUserData(req),
-      JSON.stringify({ name, members })
+      JSON.stringify({ name, members }),
     );
 
     return res.status(201).json({ message: "Team created", team: newTeam });
@@ -177,7 +191,7 @@ const getTeam = async (req, res) => {
       req.params.id,
       "TEAMS",
       `Team '${data.name}' accessed`,
-      extractUserData(req)
+      extractUserData(req),
     );
 
     const obj = data.toObject ? data.toObject() : { ...data };
@@ -313,7 +327,7 @@ const updateTeam = async (req, res) => {
       "TEAMS",
       `Team '${existingTeam.name}' updated`,
       extractUserData(req),
-      JSON.stringify(changes)
+      JSON.stringify(changes),
     );
 
     // return populated & formatted team (same format as getTeam)
@@ -358,7 +372,7 @@ const deleteTeam = async (req, res) => {
       "TEAMS",
       `Team '${team.name}' deleted`,
       extractUserData(req),
-      JSON.stringify({ name: team.name, deletedAt: team.deletedAt })
+      JSON.stringify({ name: team.name, deletedAt: team.deletedAt }),
     );
 
     const data = await Team.findById(id).populate({
