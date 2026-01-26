@@ -2,13 +2,7 @@ import { FileType } from "./fileType.model.js";
 
 const postFileType = async (req, res) => {
   try {
-    const {
-      name,
-      isQualityDocument,
-      requiresApproval,
-      trackVersioning,
-      isDefault,
-    } = req.body;
+    const { name, isQualityDocument, isDefault } = req.body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return res.status(400).json({ message: "Name is required." });
@@ -24,8 +18,6 @@ const postFileType = async (req, res) => {
     const fileType = await FileType.create({
       name: name.trim(),
       isQualityDocument,
-      requiresApproval,
-      trackVersioning,
       isDefault,
     });
 
@@ -35,8 +27,6 @@ const postFileType = async (req, res) => {
         id: fileType._id,
         name: fileType.name,
         isQualityDocument: fileType.isQualityDocument,
-        requiresApproval: fileType.requiresApproval,
-        trackVersioning: fileType.trackVersioning,
         isDefault: fileType.isDefault,
       },
     });
