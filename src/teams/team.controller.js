@@ -306,8 +306,9 @@ const updateTeam = async (req, res) => {
     }
 
     if (Array.isArray(members)) existingTeam.members = members;
-    const creator = createdByBody ?? createdby;
-    if (creator !== undefined) existingTeam.createdBy = creator;
+
+    // Note: createdBy should not be updated after team creation
+    // It represents the original creator and should remain immutable
 
     // apply any other provided fields
     for (const [k, v] of Object.entries(other)) existingTeam[k] = v;
@@ -362,6 +363,30 @@ const deleteTeam = async (req, res) => {
       return res.status(400).json({ message: "Team already deleted." });
     }
 
+    // Get teamLeaderRole from settings
+    const settings = await Settings.findOne().sort({ createdAt: -1 });
+    const teamLeaderRoleId = settings?.teamLeaderRole;
+
+    // Remove Team Leader role from all leaders
+    if (teamLeaderRoleId && team.leaders && team.leaders.length > 0) {
+      await User.updateMany(
+        {
+          _id: {
+            $in: team.leaders.map((id) => new mongoose.Types.ObjectId(id)),
+          },
+          deletedAt: null,
+        },
+        {
+          $pull: {
+            role: new mongoose.Types.ObjectId(teamLeaderRoleId),
+          },
+        },
+      );
+    }
+
+    // Clear leaders and members arrays
+    team.leaders = [];
+    team.members = [];
     team.deletedAt = new Date();
     await team.save();
 

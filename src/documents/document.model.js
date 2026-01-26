@@ -18,7 +18,7 @@ const documentSchema = new mongoose.Schema(
     },
     status: {
       type: Number,
-      default: 0,
+      default: -1,
       min: -1,
       max: 3,
     },
@@ -59,11 +59,11 @@ const documentSchema = new mongoose.Schema(
     permissionOverrides: {
       readOnly: {
         type: Number,
-        default: 1,
+        default: 0,
       },
       restricted: {
         type: Number,
-        default: 1,
+        default: 0,
       },
     },
     metadata: {

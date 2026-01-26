@@ -1,18 +1,37 @@
-import { Role } from "../roles/role.model.js";
+import { Role, defaultPermissions } from "../roles/role.model.js";
+
+const deepMerge = (target = {}, source = {}) => {
+  for (const key of Object.keys(source)) {
+    const srcVal = source[key];
+    const tgtVal = target[key];
+    if (srcVal && typeof srcVal === "object" && !Array.isArray(srcVal)) {
+      target[key] = deepMerge(
+        typeof tgtVal === "object" && !Array.isArray(tgtVal) ? tgtVal : {},
+        srcVal,
+      );
+    } else {
+      target[key] = srcVal;
+    }
+  }
+  return target;
+};
 
 const postRole = async (req, res) => {
   try {
-    const { title, description, permission, permissions } = req.body;
+    const { title, description, permission, permissions, isSystemRole } =
+      req.body;
     const perms = permission ?? permissions; // accept either key
 
     if (!title || typeof title !== "string" || !title.trim()) {
       return res.status(400).json({ message: "Title is required." });
     }
 
-    if (!perms || typeof perms !== "object" || Array.isArray(perms)) {
-      return res
-        .status(400)
-        .json({ message: "permission must be a non-empty object." });
+    // Permissions are optional, use defaults if not provided
+    let finalPermissions = JSON.parse(JSON.stringify(defaultPermissions));
+
+    if (perms && typeof perms === "object" && !Array.isArray(perms)) {
+      // Deep merge provided permissions with defaults
+      finalPermissions = deepMerge(finalPermissions, perms);
     }
 
     const existingRole = await Role.findOne({ title: title.trim() });
@@ -23,7 +42,8 @@ const postRole = async (req, res) => {
     const role = await Role.create({
       title: title.trim(),
       description,
-      permissions: perms,
+      permissions: finalPermissions,
+      isSystemRole: isSystemRole ?? false,
     });
 
     res.status(201).json({
@@ -91,22 +111,6 @@ const getRole = async (req, res) => {
   }
 };
 
-const deepMerge = (target = {}, source = {}) => {
-  for (const key of Object.keys(source)) {
-    const srcVal = source[key];
-    const tgtVal = target[key];
-    if (srcVal && typeof srcVal === "object" && !Array.isArray(srcVal)) {
-      target[key] = deepMerge(
-        typeof tgtVal === "object" && !Array.isArray(tgtVal) ? tgtVal : {},
-        srcVal
-      );
-    } else {
-      target[key] = srcVal;
-    }
-  }
-  return target;
-};
-
 const putRole = async (req, res) => {
   try {
     if (Object.keys(req.body).length === 0) {
@@ -115,8 +119,8 @@ const putRole = async (req, res) => {
 
     console.log(
       `[putRole] id=${req.params.id} bodyKeys=${Object.keys(req.body).join(
-        ","
-      )}`
+        ",",
+      )}`,
     );
 
     const role = await Role.findById(req.params.id);
@@ -136,7 +140,7 @@ const putRole = async (req, res) => {
       // create a new merged object so Mongoose detects the change
       const merged = deepMerge(
         JSON.parse(JSON.stringify(role.permissions ?? {})),
-        incomingPerms
+        incomingPerms,
       );
       role.permissions = merged;
       // ensure mongoose treats this Mixed field as modified
@@ -172,7 +176,7 @@ const deleteRole = async (req, res) => {
     }
 
     console.log(
-      `Attempting to delete role ${role.title} (ID: ${role._id}), Counter: ${role.Counter}`
+      `Attempting to delete role ${role.title} (ID: ${role._id}), Counter: ${role.Counter}`,
     );
 
     // Check if role has users assigned (counter > 0)
@@ -191,7 +195,7 @@ const deleteRole = async (req, res) => {
     const updated = await Role.findByIdAndUpdate(
       req.params.id,
       { deletedAt: new Date() },
-      { new: true }
+      { new: true },
     );
 
     res.status(200).json({
