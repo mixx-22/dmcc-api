@@ -4,7 +4,6 @@ import mongoose, { Schema } from "mongoose";
 const defaultPermissions = {
   users: { c: 0, r: 0, u: 0, d: 0 },
   teams: { c: 0, r: 0, u: 0, d: 0 },
-  roles: { c: 0, r: 0, u: 0, d: 0 },
   document: {
     c: 0,
     r: 0,
@@ -26,6 +25,16 @@ const defaultPermissions = {
     },
   },
   audit: { c: 0, r: 0, u: 0, d: 0 },
+  settings: {
+    c: 0,
+    r: 0,
+    u: 0,
+    d: 0,
+    permission: {
+      roles: { c: 0, r: 0, u: 0, d: 0 },
+      fileType: { c: 0, r: 0, u: 0, d: 0 },
+    },
+  },
 };
 
 const roleSchema = new Schema(
@@ -40,13 +49,6 @@ const roleSchema = new Schema(
     },
 
     isSystemRole: { type: Boolean, default: false },
-
-    Counter: { type: Number, default: 0 },
-
-    deletedAt: {
-      type: Date,
-      default: null,
-    },
   },
 
   { timestamps: true },

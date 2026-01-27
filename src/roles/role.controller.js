@@ -70,7 +70,7 @@ const getAllRoles = async (req, res) => {
 
     // keyword search (title OR description)
     const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
-    const filter = { deletedAt: null };
+    const filter = {};
     if (keyword) {
       const re = new RegExp(keyword, "i");
       filter.$or = [{ title: re }, { description: re }];
@@ -171,36 +171,17 @@ const deleteRole = async (req, res) => {
   try {
     const role = await Role.findById(req.params.id);
 
-    if (!role || role.deletedAt) {
+    if (!role) {
       return res.status(404).json({ message: "Role not found." });
     }
 
-    console.log(
-      `Attempting to delete role ${role.title} (ID: ${role._id}), Counter: ${role.Counter}`,
-    );
+    console.log(`Attempting to delete role ${role.title} (ID: ${role._id})`);
 
-    // Check if role has users assigned (counter > 0)
-    if (role.Counter && role.Counter > 0) {
-      console.log(`Delete blocked: role has ${role.Counter} users`);
-      return res.status(400).json({
-        message: `Cannot delete role. ${role.Counter} user(s) are still assigned to this role.`,
-        roleId: role._id,
-        roleName: role.title,
-        userCount: role.Counter,
-      });
-    }
-
-    console.log(`Proceeding with delete: Counter is ${role.Counter || 0}`);
-
-    const updated = await Role.findByIdAndUpdate(
-      req.params.id,
-      { deletedAt: new Date() },
-      { new: true },
-    );
+    const deleted = await Role.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
-      message: "Role soft-deleted successfully.",
-      role: updated,
+      message: "Role deleted successfully.",
+      role: deleted,
     });
   } catch (error) {
     res.status(500).json({
