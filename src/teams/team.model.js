@@ -32,6 +32,8 @@ const teamSchema = new Schema(
       default: [],
     },
 
+    objective: [{}],
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -45,7 +47,7 @@ const teamSchema = new Schema(
   {
     timestamps: true,
     minimize: false,
-  }
+  },
 );
 
 export const Team = mongoose.model("Team", teamSchema);

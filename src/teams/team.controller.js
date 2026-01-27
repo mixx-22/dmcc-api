@@ -73,6 +73,7 @@ const postTeam = async (req, res) => {
     const {
       name,
       members,
+      objective,
       createdBy: createdByBody,
       createdby,
       ...other
@@ -88,7 +89,7 @@ const postTeam = async (req, res) => {
       return res.status(409).json({ message: "Team already exists" });
     }
 
-    const teamData = { name, members, ...other };
+    const teamData = { name, members, objective, ...other };
     if (creator) teamData.createdBy = creator; // use schema field createdBy
 
     const newTeam = new Team(teamData);
@@ -114,7 +115,7 @@ const postTeam = async (req, res) => {
       "TEAMS",
       `Team '${name}' created`,
       extractUserData(req),
-      JSON.stringify({ name, members }),
+      JSON.stringify({ name, members, objective }),
     );
 
     return res.status(201).json({ message: "Team created", team: newTeam });
@@ -221,6 +222,7 @@ const updateTeam = async (req, res) => {
       description,
       leaders,
       members,
+      objective,
       createdBy: createdByBody,
       createdby,
       ...other
@@ -307,6 +309,8 @@ const updateTeam = async (req, res) => {
 
     if (Array.isArray(members)) existingTeam.members = members;
 
+    if (Array.isArray(objective)) existingTeam.objective = objective;
+
     // Note: createdBy should not be updated after team creation
     // It represents the original creator and should remain immutable
 
@@ -321,6 +325,7 @@ const updateTeam = async (req, res) => {
     if (description !== undefined) changes.description = description;
     if (Array.isArray(leaders)) changes.leaders = { changed: true };
     if (Array.isArray(members)) changes.members = { changed: true };
+    if (Array.isArray(objective)) changes.objective = { changed: true };
 
     await postAuditTrailLog(
       "U",
