@@ -178,7 +178,7 @@ const postDocument = async (req, res) => {
       title,
       description,
       type,
-      status: status !== undefined ? status : 0,
+      status: status !== undefined ? status : -1,
       parentId: parentId || null,
       path: docPath || [],
       owner,
