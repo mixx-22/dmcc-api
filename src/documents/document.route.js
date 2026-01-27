@@ -43,12 +43,11 @@ router.delete("/:id", authenticate, deleteDocument);
 router.post("/download", authenticate, downloadFile);
 
 // Document workflow routes
-router.post("/submit/:id", authenticate, submitDocument);
-router.post("/reject/:id", authenticate, rejectDocument);
-router.post("/discard/:id", authenticate, discardDocument);
-router.post("/approve/:id", authenticate, approveDocument);
-router.post("/publish/:id", authenticate, publishDocument);
-router.post("/revise/:id", authenticate, reviseDocument);
+router.post("/submit/:id", authenticate, submitDocument); // Submit
+router.post("/reject/:id", authenticate, rejectDocument); // Reject
+router.post("/discard/:id", authenticate, discardDocument); // Discard
+router.post("/approve/:id", authenticate, approveDocument); // Approve
+router.post("/publish/:id", authenticate, publishDocument); // Publish
 
 export default router;
 

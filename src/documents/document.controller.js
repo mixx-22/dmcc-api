@@ -1891,65 +1891,6 @@ const publishDocument = async (req, res) => {
   }
 };
 
-const reviseDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 0;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 1;
-
-    await document.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document request to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document requested: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 0,
-        checkedOut: 1,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document requested successfully",
-      data: document,
-    });
-  } catch (error) {
-    console.error("Error in requestDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request document",
-      error: error.message,
-    });
-  }
-};
-
 const getQualityDocument = async (req, res) => {
   try {
     // pagination
