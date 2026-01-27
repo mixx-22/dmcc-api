@@ -39,7 +39,7 @@ const postApproval = async (req, res) => {
       requestedBy,
       requestedFor,
       status: status !== undefined ? status : -1, // Default to -1 (Working)
-      mode: mode || "Department", // Default to Department
+      mode: mode || null, // Default to Department
       remarks,
       otherRemarks,
       approvalDate_DEPARTMENT,

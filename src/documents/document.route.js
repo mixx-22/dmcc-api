@@ -42,17 +42,10 @@ router.delete("/:id", authenticate, deleteDocument);
 router.post("/download", authenticate, downloadFile);
 
 // Document workflow routes
-router.post("/submit/:id", authenticate, submitDocument); // Submit
+router.post("/request", authenticate, submitDocument); // Submit
 router.post("/reject/:id", authenticate, rejectDocument); // Reject
 router.post("/discard/:id", authenticate, discardDocument); // Discard
 router.post("/approve/:id", authenticate, approveDocument); // Approve
 router.post("/publish/:id", authenticate, publishDocument); // Publish
 
 export default router;
-
-// documents/submit/:id
-// documents/reject/:id
-// documents/discard/:id
-// documents/approve/:id
-// documents/publish/:id
-// documents/revise/:id

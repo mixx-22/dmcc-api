@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 const postDocument = async (req, res) => {
   try {
     // Handle both JSON and form-data
-    let permissionOverrides, metadata, docPath, privacy;
+    let permissionOverrides, metadata, privacy;
 
     // If privacy is a string (from form-data), parse it
     if (req.body.privacy) {
@@ -71,35 +71,6 @@ const postDocument = async (req, res) => {
         }
       } else {
         metadata = req.body.metadata;
-      }
-    }
-
-    // Handle path - should be an array
-    if (req.body.path !== undefined) {
-      if (Array.isArray(req.body.path)) {
-        docPath = req.body.path;
-      } else if (typeof req.body.path === "string") {
-        // If it's a JSON string representing an array, parse it
-        if (req.body.path.startsWith("[")) {
-          try {
-            docPath = JSON.parse(req.body.path);
-          } catch (error) {
-            return res.status(400).json({
-              success: false,
-              message:
-                "Invalid JSON format for 'path' field. Path should be an array like []",
-              error: error.message,
-            });
-          }
-        } else {
-          // If it's a plain string, convert to array with that string
-          docPath = req.body.path ? [req.body.path] : [];
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "Path should be an array.",
-        });
       }
     }
 
@@ -178,9 +149,13 @@ const postDocument = async (req, res) => {
       title,
       description,
       type,
-      status: status !== undefined ? status : -1,
+      status:
+        type === "file" && (status === undefined || status === 0)
+          ? -1
+          : status !== undefined
+            ? status
+            : -1,
       parentId: parentId || null,
-      path: docPath || [],
       owner,
       privacy: privacy || { users: [], teams: [], roles: [] },
       permissionOverrides: permissionOverrides || {
@@ -977,7 +952,7 @@ const updateDocument = async (req, res) => {
     }
 
     // Parse JSON fields from form-data if they exist
-    let permissionOverrides, metadata, docPath, privacy;
+    let permissionOverrides, metadata, privacy;
 
     if (req.body.privacy) {
       if (typeof req.body.privacy === "string") {
@@ -1029,32 +1004,6 @@ const updateDocument = async (req, res) => {
       }
     }
 
-    if (req.body.path !== undefined) {
-      if (Array.isArray(req.body.path)) {
-        docPath = req.body.path;
-      } else if (typeof req.body.path === "string") {
-        if (req.body.path.startsWith("[")) {
-          try {
-            docPath = JSON.parse(req.body.path);
-          } catch (error) {
-            return res.status(400).json({
-              success: false,
-              message:
-                "Invalid JSON format for 'path' field. Path should be an array like []",
-              error: error.message,
-            });
-          }
-        } else {
-          docPath = req.body.path ? [req.body.path] : [];
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "Path should be an array.",
-        });
-      }
-    }
-
     const { title, description, type, status, parentId } = req.body;
 
     // Capture old teams BEFORE updating document (for team stat tracking)
@@ -1099,7 +1048,6 @@ const updateDocument = async (req, res) => {
       }
       document.parentId = parentId || null;
     }
-    if (docPath !== undefined) document.path = docPath;
     if (privacy !== undefined) document.privacy = privacy;
     if (permissionOverrides !== undefined)
       document.permissionOverrides = permissionOverrides;
@@ -1487,10 +1435,17 @@ const previewFile = async (req, res) => {
 
 const submitDocument = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { documentId } = req.body;
+
+    if (!documentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Document ID is required",
+      });
+    }
 
     // Find the document
-    const document = await Document.findById(id);
+    const document = await Document.findById(documentId);
     if (!document) {
       return res.status(404).json({
         success: false,
@@ -1507,11 +1462,12 @@ const submitDocument = async (req, res) => {
     }
 
     // Update document status and metadata
-    document.status = 1;
+    document.status = 0;
     if (!document.metadata) {
       document.metadata = {};
     }
     document.metadata.checkedOut = 0;
+    document.markModified("metadata");
 
     await document.save();
 

@@ -39,6 +39,11 @@ const teamSchema = new Schema(
       default: "",
     },
 
+    folderTitle: {
+      type: String,
+      default: "",
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

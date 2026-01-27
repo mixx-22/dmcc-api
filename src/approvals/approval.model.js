@@ -50,10 +50,6 @@ const approvalSchema = new mongoose.Schema(
       ref: "Document",
       required: true,
     },
-    applicationId: {
-      type: String,
-      default: "",
-    },
     requestedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -97,8 +93,8 @@ const approvalSchema = new mongoose.Schema(
     },
     mode: {
       type: String,
-      default: "Department",
-      enum: ["Department", "Document Controller"],
+      default: "Team",
+      enum: ["Team", "Document Controller"],
     },
     remarks: {
       type: String,

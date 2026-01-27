@@ -32,10 +32,6 @@ const documentSchema = new mongoose.Schema(
       ref: "Document",
       default: null,
     },
-    path: {
-      type: [String],
-      default: [],
-    },
     privacy: {
       users: [
         {
