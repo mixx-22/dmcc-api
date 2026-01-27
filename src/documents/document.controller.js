@@ -1,4 +1,4 @@
-import Document from "../documents/document.model.js";
+import { Document } from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import Approval from "../approvals/approval.model.js";
@@ -2022,7 +2022,6 @@ export {
   discardDocument,
   approveDocument,
   publishDocument,
-  reviseDocument,
   previewFile,
   getQualityDocument,
 };

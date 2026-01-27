@@ -14,7 +14,6 @@ import {
   discardDocument,
   approveDocument,
   publishDocument,
-  reviseDocument,
   getQualityDocument,
 } from "./document.controller.js";
 import { authenticate } from "../users/user.controller.js";

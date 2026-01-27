@@ -32,7 +32,7 @@ const teamSchema = new Schema(
       default: [],
     },
 
-    objective: [{}],
+    objectives: [{}],
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

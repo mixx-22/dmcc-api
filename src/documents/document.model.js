@@ -106,7 +106,5 @@ documentSchema.index({ status: 1 });
 documentSchema.index({ parentId: 1 });
 documentSchema.index({ owner: 1 });
 
-const Document =
+export const Document =
   mongoose.models.Document || mongoose.model("Document", documentSchema);
-
-export default Document;
