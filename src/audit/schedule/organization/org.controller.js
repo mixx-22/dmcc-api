@@ -9,11 +9,11 @@ const postOrganization = async (req, res) => {
   try {
     const {
       auditScheduleId,
-      teamId,
+      team,
       status,
       auditors,
       documents,
-      visit,
+      visits,
       verdict,
     } = req.body;
 
@@ -23,17 +23,17 @@ const postOrganization = async (req, res) => {
         .json({ message: "Audit Schedule ID is required." });
     }
 
-    if (!teamId) {
+    if (!team) {
       return res.status(400).json({ message: "Team ID is required." });
     }
 
     const orgData = {
       auditScheduleId,
-      teamId,
+      team,
       status,
       auditors,
       documents,
-      visit,
+      visits,
       verdict,
     };
 
@@ -51,18 +51,25 @@ const postOrganization = async (req, res) => {
       }
 
       // Add the new organization ID to the organizations object
-      // Using teamId as key and org ID as value
-      schedule.organizations[teamId.toString()] = newOrg._id.toString();
+      // Using team as key and org ID as value
+      schedule.organizations[team.toString()] = newOrg._id.toString();
       schedule.markModified("organizations");
       await schedule.save();
     }
 
-    res.status(201).json({
+    return res.status(201).json({
+      success: true,
       message: "Organization created successfully.",
       organization: newOrg,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error.", error: error.message });
+    console.error("Error in postOrganization:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create organization",
+      error: error.message,
+    });
   }
 };
 
@@ -81,9 +88,9 @@ const getAllOrganization = async (req, res) => {
       filter.auditScheduleId = req.query.auditScheduleId;
     }
 
-    // Filter by teamId if provided
-    if (req.query.teamId) {
-      filter.teamId = req.query.teamId;
+    // Filter by team if provided
+    if (req.query.team) {
+      filter.team = req.query.team;
     }
 
     // Filter by status if provided
@@ -96,18 +103,79 @@ const getAllOrganization = async (req, res) => {
 
     const data = await Org.find(filter)
       .populate("auditScheduleId", "title")
-      .populate("teamId", "name")
+      .populate(
+        "team",
+        "name description folderId folderTitle objectives updatedAt",
+      )
       .skip((page - 1) * limit)
       .limit(limit)
       .sort({ createdAt: -1 });
 
+    // Transform team data to include id field
+    const transformedData = await Promise.all(
+      data.map(async (org) => {
+        const orgObj = org.toObject();
+
+        // Transform team data
+        if (orgObj.team && orgObj.team._id) {
+          orgObj.team = {
+            id: orgObj.team._id.toString(),
+            name: orgObj.team.name || "",
+            description: orgObj.team.description || "",
+            folderId: orgObj.team.folderId || "",
+            folderTitle: orgObj.team.folderTitle || "",
+            objectives: orgObj.team.objectives || [],
+            updatedAt: orgObj.team.updatedAt || "",
+          };
+        }
+
+        // Transform auditors data
+        let auditorsData = [];
+        if (orgObj.auditors) {
+          let auditorIds = [];
+
+          if (Array.isArray(orgObj.auditors)) {
+            auditorIds = orgObj.auditors;
+          } else if (typeof orgObj.auditors === "object") {
+            auditorIds = Object.values(orgObj.auditors).filter(
+              (id) => id && mongoose.Types.ObjectId.isValid(id),
+            );
+          }
+
+          if (auditorIds.length > 0) {
+            const auditors = await User.find({
+              _id: { $in: auditorIds },
+              deletedAt: null,
+            }).select("firstName lastName fullname fullName name employeeId");
+
+            auditorsData = auditors.map((user) => {
+              const firstName = user.firstName || "";
+              const lastName = user.lastName || "";
+              const name = `${firstName} ${lastName}`.trim();
+
+              return {
+                id: user._id.toString(),
+                name: name || user.fullname || user.fullName || user.name || "",
+                employeeId: user.employeeId || "",
+              };
+            });
+          }
+        }
+        orgObj.auditors = auditorsData;
+
+        return orgObj;
+      }),
+    );
+
     return res.status(200).json({
       success: true,
       message: "Organizations retrieved successfully",
-      data,
+      data: transformedData,
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
+    console.error("Error in getAllOrganization:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve organizations",
@@ -138,14 +206,18 @@ const getOrganization = async (req, res) => {
       }
     }
 
-    // Populate teamData
-    let teamData = null;
-    if (orgObj.teamId) {
-      const team = await Team.findById(orgObj.teamId);
+    // Populate team with id and name
+    if (orgObj.team) {
+      const team = await Team.findById(orgObj.team);
       if (team) {
-        teamData = {
+        orgObj.team = {
           id: team._id.toString(),
-          name: team.name,
+          name: team.name || "",
+          description: team.description || "",
+          folderId: team.folderId || "",
+          folderTitle: team.folderTitle || "",
+          objectives: team.objectives || [],
+          updatedAt: team.updatedAt || "",
         };
       }
     }
@@ -169,26 +241,23 @@ const getOrganization = async (req, res) => {
         const auditors = await User.find({
           _id: { $in: auditorIds },
           deletedAt: null,
-        }).select("firstName lastName fullname fullName name");
+        }).select("firstName lastName fullname fullName name employeeId");
 
         auditorsData = auditors.map((user) => {
           const firstName = user.firstName || "";
           const lastName = user.lastName || "";
-          const fullName =
-            user.fullname ||
-            user.fullName ||
-            user.name ||
-            `${firstName} ${lastName}`.trim();
+          const name = `${firstName} ${lastName}`.trim();
 
           return {
             id: user._id.toString(),
-            name: fullName,
-            firstName: firstName,
-            lastName: lastName,
+            name: name || user.fullname || user.fullName || user.name || "",
+            employeeId: user.employeeId || "",
           };
         });
       }
     }
+
+    orgObj.auditors = auditorsData;
 
     // Populate documentsData
     let documentsData = [];
@@ -219,8 +288,6 @@ const getOrganization = async (req, res) => {
     }
 
     orgObj.auditScheduleData = auditScheduleData;
-    orgObj.teamData = teamData;
-    orgObj.auditorsData = auditorsData;
     orgObj.documentsData = documentsData;
 
     return res.status(200).json({
@@ -229,6 +296,8 @@ const getOrganization = async (req, res) => {
       data: orgObj,
     });
   } catch (error) {
+    console.error("Error in getOrganization:", error);
+
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve organization",
@@ -250,16 +319,16 @@ const putOrganization = async (req, res) => {
 
     const {
       auditScheduleId,
-      teamId,
+      team,
       status,
       auditors,
       documents,
-      visit,
+      visits,
       verdict,
     } = req.body;
 
     if (auditScheduleId !== undefined) org.auditScheduleId = auditScheduleId;
-    if (teamId !== undefined) org.teamId = teamId;
+    if (team !== undefined) org.team = team;
     if (status !== undefined) org.status = status;
     if (auditors !== undefined) {
       org.auditors = auditors;
@@ -269,18 +338,22 @@ const putOrganization = async (req, res) => {
       org.documents = documents;
       org.markModified("documents");
     }
-    if (visit !== undefined) org.visit = visit;
+    if (visits !== undefined) org.visits = visits;
     if (verdict !== undefined) org.verdict = verdict;
 
     const saved = await org.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Organization updated successfully.",
       organization: saved,
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    console.error("Error in putOrganization:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update organization",
       error: error.message,
     });
   }
@@ -297,13 +370,17 @@ const deleteOrganization = async (req, res) => {
     org.deletedAt = new Date();
     await org.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Organization deleted successfully.",
       organization: org,
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    console.error("Error in deleteOrganization:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete organization",
       error: error.message,
     });
   }

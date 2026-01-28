@@ -8,7 +8,7 @@ const orgSchema = new Schema(
       required: true,
     },
 
-    teamId: {
+    team: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Team",
       required: true,
@@ -29,7 +29,7 @@ const orgSchema = new Schema(
       default: () => ({}),
     },
 
-    visit: [
+    visits: [
       {
         type: Schema.Types.Mixed,
       },

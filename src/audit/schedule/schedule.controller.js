@@ -197,13 +197,15 @@ const putSchedule = async (req, res) => {
 
     const saved = await schedule.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Schedule updated successfully.",
       schedule: saved,
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update schedule",
       error: error.message,
     });
   }
@@ -220,13 +222,15 @@ const deleteSchedule = async (req, res) => {
     schedule.deletedAt = new Date();
     await schedule.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Schedule deleted successfully.",
       schedule: schedule,
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete schedule",
       error: error.message,
     });
   }
