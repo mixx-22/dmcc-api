@@ -1,4 +1,4 @@
-import Approval from "./request.model.js";
+import Request from "./request.model.js";
 import { Document } from "../documents/document.model.js";
 
 const postRequest = async (req, res) => {

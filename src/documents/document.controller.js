@@ -1,7 +1,6 @@
 import { Document } from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
-import Approval from "../request/request.model.js";
 import { FileType } from "../fileType/fileType.model.js";
 import {
   putFileTeamStat,
