@@ -14,6 +14,9 @@ const postSchedule = async (req, res) => {
       status,
     } = req.body;
 
+    // Get userId from token
+    const userId = req.user?.id || req.user?._id;
+
     if (!title || typeof title !== "string" || !title.trim()) {
       return res.status(400).json({ message: "Title is required." });
     }
@@ -42,6 +45,7 @@ const postSchedule = async (req, res) => {
       standard,
       organizations,
       status,
+      owner: userId,
     };
 
     const newSchedule = await Schedule.create(scheduleData);
@@ -81,6 +85,11 @@ const getAllSchedule = async (req, res) => {
     const totalPages = Math.ceil(total / limit) || 1;
 
     const data = await Schedule.find(filter)
+      .populate({
+        path: "owner",
+        select:
+          "fullname fullName name firstName lastName middleName employeeId",
+      })
       .skip((page - 1) * limit)
       .limit(limit)
       .sort({ createdAt: -1 });
@@ -99,7 +108,10 @@ const getAllSchedule = async (req, res) => {
 
 const getSchedule = async (req, res) => {
   try {
-    const schedule = await Schedule.findById(req.params.id);
+    const schedule = await Schedule.findById(req.params.id).populate({
+      path: "owner",
+      select: "fullname fullName name firstName lastName middleName employeeId",
+    });
 
     if (!schedule || schedule.deletedAt) {
       return res.status(404).json({ message: "Schedule not found." });

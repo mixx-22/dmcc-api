@@ -67,10 +67,10 @@ import settingRoutes from "./systemSettings/settings.route.js";
 import recentDocsRoutes from "./documentLogs/recentDocuments/recentDocs.route.js";
 import auditTrailRoutes from "./documentLogs/auditTrail/auditTrail.route.js";
 import fileTypeRoutes from "./fileType/fileType.route.js";
-import approvalRoutes from "./approvals/approval.route.js";
 import teamStatRoutes from "./teams/team-stat/teamStat.route.js";
 import scheduleRoutes from "./audit/schedule/schedule.route.js";
 import organizationRoutes from "./audit/schedule/organization/org.route.js";
+import requestRoutes from "./request/request.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -81,9 +81,9 @@ app.use("/settings", settingRoutes);
 app.use("/recent-documents", recentDocsRoutes);
 app.use("/audit-trails", auditTrailRoutes);
 app.use("/file-types", fileTypeRoutes);
-app.use("/approvals", approvalRoutes);
 app.use("/team-stats", teamStatRoutes);
 app.use("/schedules", scheduleRoutes);
 app.use("/organizations", organizationRoutes);
+app.use("/request", requestRoutes);
 
 export default app;

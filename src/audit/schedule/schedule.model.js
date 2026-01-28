@@ -38,6 +38,12 @@ const scheduleSchema = new Schema(
       default: 0,
     },
 
+    owner: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
     deletedAt: {
       type: Date,
       default: null,
