@@ -101,13 +101,16 @@ const getAllOrganization = async (req, res) => {
       .limit(limit)
       .sort({ createdAt: -1 });
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
+      message: "Organizations retrieved successfully",
       data,
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve organizations",
       error: error.message,
     });
   }
@@ -220,10 +223,15 @@ const getOrganization = async (req, res) => {
     orgObj.auditorsData = auditorsData;
     orgObj.documentsData = documentsData;
 
-    res.status(200).json({ data: orgObj });
+    return res.status(200).json({
+      success: true,
+      message: "Organization retrieved successfully",
+      data: orgObj,
+    });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve organization",
       error: error.message,
     });
   }

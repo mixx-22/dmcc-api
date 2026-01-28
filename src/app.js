@@ -70,7 +70,7 @@ import fileTypeRoutes from "./fileType/fileType.route.js";
 import teamStatRoutes from "./teams/team-stat/teamStat.route.js";
 import scheduleRoutes from "./audit/schedule/schedule.route.js";
 import organizationRoutes from "./audit/schedule/organization/org.route.js";
-import requestRoutes from "./request/request.route.js";
+import requestRoutes from "./requests/request.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);

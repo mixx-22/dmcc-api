@@ -23,8 +23,8 @@ const postRequest = async (req, res) => {
       });
     }
 
-    // Create approval with UPLOAD type and status -1
-    const newApproval = new Approval({
+    // Create request with UPLOAD type and status -1
+    const newRequest = new Request({
       ...approvalData,
       type: "UPLOAD",
       status: -1,
@@ -32,10 +32,10 @@ const postRequest = async (req, res) => {
       requestedBy: userId,
     });
 
-    await newApproval.save();
+    await newRequest.save();
 
-    // Populate the saved approval
-    const populatedApproval = await Approval.findById(newApproval._id)
+    // Populate the saved request
+    const populatedRequest = await Request.findById(newRequest._id)
       .populate({
         path: "requestedBy",
         select:
@@ -58,11 +58,11 @@ const postRequest = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Approval created successfully",
-      data: populatedApproval,
+      message: "Request created successfully",
+      data: populatedRequest,
     });
   } catch (error) {
-    console.error("Error creating approval:", error);
+    console.error("Error creating request:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to create approval",
@@ -76,30 +76,49 @@ const putRequestSubmit = async (req, res) => {
     const { id } = req.params;
     const { ...updateData } = req.body;
 
-    // Find the approval
-    const approval = await Approval.findById(id);
+    // Find the request
+    const request = await Request.findById(id);
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
-        message: "Approval not found",
+        message: "Request not found",
       });
     }
 
     // Update all fields from request body
     Object.keys(updateData).forEach((key) => {
-      approval[key] = updateData[key];
+      request[key] = updateData[key];
     });
 
     // Set required fields for submission
-    approval.type = "SUBMIT";
-    approval.status = 0;
-    approval.mode = "TEAM";
+    request.type = "SUBMIT";
+    request.status = 0;
+    request.mode = "TEAM";
 
-    await approval.save();
+    await request.save();
 
-    // Populate the updated approval
-    const populatedApproval = await Approval.findById(id)
+    // Update the parent document if parentId exists
+    if (request.parentId) {
+      try {
+        const document = await Document.findById(request.parentId);
+        if (document) {
+          document.status = 0;
+          if (!document.metadata) {
+            document.metadata = {};
+          }
+          document.metadata.checkedOut = 0;
+          document.markModified("metadata");
+          await document.save();
+        }
+      } catch (docError) {
+        console.error("Error updating document:", docError);
+        // Don't fail the request submission if document update fails
+      }
+    }
+
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -122,11 +141,11 @@ const putRequestSubmit = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Approval submitted successfully",
-      data: populatedApproval,
+      message: "Request submitted successfully",
+      data: populatedRequest,
     });
   } catch (error) {
-    console.error("Error submitting approval:", error);
+    console.error("Error submitting request:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to submit approval",
@@ -181,10 +200,10 @@ const getAllRequest = async (req, res) => {
       filter.parentId = req.query.parentId;
     }
 
-    const total = await Approval.countDocuments(filter);
+    const total = await Request.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
 
-    const data = await Approval.find(filter)
+    const data = await Request.find(filter)
       .populate({
         path: "requestedBy",
         select:
@@ -214,10 +233,10 @@ const getAllRequest = async (req, res) => {
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
-    console.error("Error fetching approvals:", error);
+    console.error("Error fetching requests:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch approvals",
+      message: "Failed to fetch requests",
       error: error.message,
     });
   }
@@ -227,8 +246,8 @@ const getRequest = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get approval by ID
-    const approval = await Approval.findById(id)
+    // Get request by ID
+    const request = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -249,7 +268,7 @@ const getRequest = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
         message: "Request not found",
@@ -258,8 +277,8 @@ const getRequest = async (req, res) => {
 
     // Get document data using parentId
     let documentData = {};
-    if (approval.parentId) {
-      const document = await Document.findById(approval.parentId);
+    if (request.parentId) {
+      const document = await Document.findById(request.parentId);
       if (document) {
         documentData = {
           title: document.title || "",
@@ -269,14 +288,14 @@ const getRequest = async (req, res) => {
       }
     }
 
-    // Combine data with approval taking priority
+    // Combine data with request taking priority
     const combinedData = {
-      ...approval.toObject(),
-      title: approval.title || documentData.title || "",
-      description: approval.description || documentData.description || "",
+      ...request.toObject(),
+      title: request.title || documentData.title || "",
+      description: request.description || documentData.description || "",
       metadata: {
         ...documentData.metadata,
-        ...approval.metadata,
+        ...request.metadata,
       },
     };
 
@@ -308,10 +327,10 @@ const putRequestApproved = async (req, res) => {
       });
     }
 
-    // Find the approval
-    const approval = await Approval.findById(id);
+    // Find the request
+    const request = await Request.findById(id);
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
         message: "Request not found",
@@ -319,16 +338,35 @@ const putRequestApproved = async (req, res) => {
     }
 
     // Update with approval fields
-    approval.type = "APPROVED";
-    approval.status = 1;
-    approval.mode = "CONTROLLER";
-    approval.reviewedBy = userId;
-    approval.reviewedDate = new Date();
+    request.type = "APPROVED";
+    request.status = 1;
+    request.mode = "CONTROLLER";
+    request.reviewedBy = userId;
+    request.reviewedDate = new Date();
 
-    await approval.save();
+    await request.save();
 
-    // Populate the updated approval
-    const populatedApproval = await Approval.findById(id)
+    // Update the parent document if parentId exists
+    if (request.parentId) {
+      try {
+        const document = await Document.findById(request.parentId);
+        if (document) {
+          document.status = 0;
+          if (!document.metadata) {
+            document.metadata = {};
+          }
+          document.metadata.checkedOut = 0;
+          document.markModified("metadata");
+          await document.save();
+        }
+      } catch (docError) {
+        console.error("Error updating document:", docError);
+        // Don't fail the request approval if document update fails
+      }
+    }
+
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -352,7 +390,7 @@ const putRequestApproved = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Request approved successfully",
-      data: populatedApproval,
+      data: populatedRequest,
     });
   } catch (error) {
     console.error("Error approving request:", error);
@@ -379,10 +417,10 @@ const putRequestReject = async (req, res) => {
       });
     }
 
-    // Find the approval
-    const approval = await Approval.findById(id);
+    // Find the request
+    const request = await Request.findById(id);
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
         message: "Request not found",
@@ -390,19 +428,38 @@ const putRequestReject = async (req, res) => {
     }
 
     // Update with rejection fields
-    approval.type = "REJECT";
-    approval.status = -1;
-    approval.mode = "TEAM";
-    approval.reviewedBy = userId;
-    approval.reviewedDate = new Date();
+    request.type = "REJECT";
+    request.status = -1;
+    request.mode = "TEAM";
+    request.reviewedBy = userId;
+    request.reviewedDate = new Date();
     if (remarks !== undefined) {
-      approval.remarks = remarks;
+      request.remarks = remarks;
     }
 
-    await approval.save();
+    await request.save();
 
-    // Populate the updated approval
-    const populatedApproval = await Approval.findById(id)
+    // Update the parent document if parentId exists
+    if (request.parentId) {
+      try {
+        const document = await Document.findById(request.parentId);
+        if (document) {
+          document.status = -1;
+          if (!document.metadata) {
+            document.metadata = {};
+          }
+          document.metadata.checkedOut = 1;
+          document.markModified("metadata");
+          await document.save();
+        }
+      } catch (docError) {
+        console.error("Error updating document:", docError);
+        // Don't fail the request rejection if document update fails
+      }
+    }
+
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -426,7 +483,7 @@ const putRequestReject = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Request rejected successfully",
-      data: populatedApproval,
+      data: populatedRequest,
     });
   } catch (error) {
     console.error("Error rejecting request:", error);
@@ -442,10 +499,10 @@ const putRequestDiscard = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Find the approval
-    const approval = await Approval.findById(id);
+    // Find the request
+    const request = await Request.findById(id);
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
         message: "Request not found",
@@ -453,15 +510,34 @@ const putRequestDiscard = async (req, res) => {
     }
 
     // Update with discard fields
-    approval.type = "DISCARD";
-    approval.status = -2;
-    approval.mode = "";
-    approval.deletedAt = new Date();
+    request.type = "DISCARD";
+    request.status = -2;
+    request.mode = "";
+    request.deletedAt = new Date();
 
-    await approval.save();
+    await request.save();
 
-    // Populate the updated approval
-    const populatedApproval = await Approval.findById(id)
+    // Update the parent document if parentId exists
+    if (request.parentId) {
+      try {
+        const document = await Document.findById(request.parentId);
+        if (document) {
+          document.status = 2;
+          if (!document.metadata) {
+            document.metadata = {};
+          }
+          document.metadata.checkedOut = 0;
+          document.markModified("metadata");
+          await document.save();
+        }
+      } catch (docError) {
+        console.error("Error updating document:", docError);
+        // Don't fail the request discard if document update fails
+      }
+    }
+
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -485,7 +561,7 @@ const putRequestDiscard = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Request discarded successfully",
-      data: populatedApproval,
+      data: populatedRequest,
     });
   } catch (error) {
     console.error("Error discarding request:", error);
@@ -511,10 +587,10 @@ const putRequestPublish = async (req, res) => {
       });
     }
 
-    // Find the approval
-    const approval = await Approval.findById(id);
+    // Find the request
+    const request = await Request.findById(id);
 
-    if (!approval) {
+    if (!request) {
       return res.status(404).json({
         success: false,
         message: "Request not found",
@@ -522,16 +598,16 @@ const putRequestPublish = async (req, res) => {
     }
 
     // Update with publish fields
-    approval.type = "PUBLISH";
-    approval.status = 2;
-    approval.mode = "";
-    approval.publishedBy = userId;
-    approval.publishedDate = new Date();
+    request.type = "PUBLISH";
+    request.status = 2;
+    request.mode = "";
+    request.publishedBy = userId;
+    request.publishedDate = new Date();
 
-    await approval.save();
+    await request.save();
 
-    // Populate the updated approval
-    const populatedApproval = await Approval.findById(id)
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
       .populate({
         path: "requestedBy",
         select:
@@ -555,7 +631,7 @@ const putRequestPublish = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Request published successfully",
-      data: populatedApproval,
+      data: populatedRequest,
     });
   } catch (error) {
     console.error("Error publishing request:", error);

@@ -94,13 +94,16 @@ const getAllSchedule = async (req, res) => {
       .limit(limit)
       .sort({ createdAt: -1 });
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
+      message: "Schedules retrieved successfully",
       data,
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve schedules",
       error: error.message,
     });
   }
@@ -140,10 +143,15 @@ const getSchedule = async (req, res) => {
 
     scheduleObj.organizationData = organizationData;
 
-    res.status(200).json({ data: scheduleObj });
+    return res.status(200).json({
+      success: true,
+      message: "Schedule retrieved successfully",
+      data: scheduleObj,
+    });
   } catch (error) {
-    res.status(500).json({
-      message: "Server error.",
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve schedule",
       error: error.message,
     });
   }
