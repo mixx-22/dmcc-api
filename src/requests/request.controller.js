@@ -2,6 +2,7 @@ import Request from "./request.model.js";
 import { Document } from "../documents/document.model.js";
 import { VersionHistory } from "../documents/versionHistory/versionHistory.model.js";
 import { User } from "../users/user.model.js";
+import { FileType } from "../fileType/fileType.model.js";
 import mongoose from "mongoose";
 
 const postRequest = async (req, res) => {
@@ -197,7 +198,7 @@ const getAllRequest = async (req, res) => {
     if (req.query.status !== undefined) {
       filter.status = parseInt(req.query.status, 10);
     } else {
-      filter.status = { $in: [0, -1] };
+      filter.status = { $in: [0, -1, 1] };
     }
 
     // Filter by type if provided
@@ -502,7 +503,7 @@ const putRequestReject = async (req, res) => {
     // Update with rejection fields
     request.type = "REJECT";
     request.status = -1;
-    request.mode = "TEAM";
+    request.mode = "REJECT";
     request.reviewedBy = userId;
     request.reviewedDate = new Date();
     if (remarks !== undefined) {
@@ -583,8 +584,8 @@ const putRequestDiscard = async (req, res) => {
 
     // Update with discard fields
     request.type = "DISCARD";
-    request.status = -2;
-    request.mode = "";
+    request.status = -1;
+    request.mode = "DISCARD";
     request.deletedAt = new Date();
 
     await request.save();
@@ -594,11 +595,19 @@ const putRequestDiscard = async (req, res) => {
       try {
         const document = await Document.findById(request.documentId);
         if (document) {
-          document.status = 2;
+          // Find default fileType
+          const defaultFileType = await FileType.findOne({
+            isDefault: true,
+          }).select("_id");
+
+          document.status = -1;
           if (!document.metadata) {
             document.metadata = {};
           }
-          document.metadata.checkedOut = 0;
+          document.metadata.checkedOut = 1;
+          if (defaultFileType) {
+            document.metadata.fileType = defaultFileType._id;
+          }
           document.markModified("metadata");
           await document.save();
         }

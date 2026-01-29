@@ -220,7 +220,7 @@ const postDocument = async (req, res) => {
             metadata: savedDocument.metadata || {},
             type: "UPLOAD",
             status: -1,
-            mode: "",
+            mode: "NEW",
             requestedBy: owner,
           });
           const savedRequest = await newRequest.save();
@@ -713,8 +713,17 @@ const getDocument = async (req, res) => {
         fileTypeId = fileType.toString();
       }
 
-      // Only query if it's a valid ObjectId
-      if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+      // Skip transformation if fileType is "document" (legacy string value)
+      if (fileTypeId === "document") {
+        responseData.metadata.fileType = {
+          id: null,
+          name: "document",
+          isQualityDocument: false,
+          requiresApproval: false,
+          trackVersioning: false,
+        };
+      } else if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+        // Only query if it's a valid ObjectId
         const fileTypeData = await FileType.findById(fileTypeId)
           .select("_id name isQualityDocument requiresApproval trackVersioning")
           .lean();
@@ -728,23 +737,54 @@ const getDocument = async (req, res) => {
             trackVersioning: fileTypeData.trackVersioning || false,
           };
         } else {
+          // FileType not found, try to get default fileType
+          const defaultFileType = await FileType.findOne({ isDefault: true })
+            .select(
+              "_id name isQualityDocument requiresApproval trackVersioning",
+            )
+            .lean();
+
+          if (defaultFileType) {
+            responseData.metadata.fileType = {
+              id: defaultFileType._id,
+              name: defaultFileType.name || "",
+              isQualityDocument: defaultFileType.isQualityDocument || false,
+              requiresApproval: defaultFileType.requiresApproval || false,
+              trackVersioning: defaultFileType.trackVersioning || false,
+            };
+          } else {
+            responseData.metadata.fileType = {
+              id: fileTypeId,
+              name: "",
+              isQualityDocument: false,
+              requiresApproval: false,
+              trackVersioning: false,
+            };
+          }
+        }
+      } else {
+        // Invalid ObjectId, try to get default fileType
+        const defaultFileType = await FileType.findOne({ isDefault: true })
+          .select("_id name isQualityDocument requiresApproval trackVersioning")
+          .lean();
+
+        if (defaultFileType) {
           responseData.metadata.fileType = {
-            id: fileTypeId,
+            id: defaultFileType._id,
+            name: defaultFileType.name || "",
+            isQualityDocument: defaultFileType.isQualityDocument || false,
+            requiresApproval: defaultFileType.requiresApproval || false,
+            trackVersioning: defaultFileType.trackVersioning || false,
+          };
+        } else {
+          responseData.metadata.fileType = {
+            id: null,
             name: "",
             isQualityDocument: false,
             requiresApproval: false,
             trackVersioning: false,
           };
         }
-      } else {
-        // Invalid ObjectId, set to null
-        responseData.metadata.fileType = {
-          id: null,
-          name: "",
-          isQualityDocument: false,
-          requiresApproval: false,
-          trackVersioning: false,
-        };
       }
     }
 
@@ -796,6 +836,11 @@ const getDocument = async (req, res) => {
         });
       }
 
+      // Get default fileType for fallback
+      const defaultFileType = await FileType.findOne({ isDefault: true })
+        .select("_id name isQualityDocument requiresApproval trackVersioning")
+        .lean();
+
       // Transform fileType for file children
       const transformedChildren = children.map((child) => {
         if (child.type === "file" && child.metadata?.fileType) {
@@ -809,8 +854,17 @@ const getDocument = async (req, res) => {
             fileTypeId = fileType.toString();
           }
 
-          // Only transform if it's a valid ObjectId
-          if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+          // Skip transformation if fileType is "document" (legacy string value)
+          if (fileTypeId === "document") {
+            child.metadata.fileType = {
+              id: null,
+              name: "document",
+              isQualityDocument: false,
+              requiresApproval: false,
+              trackVersioning: false,
+            };
+          } else if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+            // Only transform if it's a valid ObjectId
             const fileTypeData = fileTypesMap[fileTypeId];
 
             if (fileTypeData) {
@@ -822,23 +876,44 @@ const getDocument = async (req, res) => {
                 trackVersioning: fileTypeData.trackVersioning || false,
               };
             } else {
+              // FileType not found, use default fileType
+              if (defaultFileType) {
+                child.metadata.fileType = {
+                  id: defaultFileType._id,
+                  name: defaultFileType.name || "",
+                  isQualityDocument: defaultFileType.isQualityDocument || false,
+                  requiresApproval: defaultFileType.requiresApproval || false,
+                  trackVersioning: defaultFileType.trackVersioning || false,
+                };
+              } else {
+                child.metadata.fileType = {
+                  id: fileTypeId,
+                  name: "",
+                  isQualityDocument: false,
+                  requiresApproval: false,
+                  trackVersioning: false,
+                };
+              }
+            }
+          } else {
+            // Invalid ObjectId, use default fileType
+            if (defaultFileType) {
               child.metadata.fileType = {
-                id: fileTypeId,
+                id: defaultFileType._id,
+                name: defaultFileType.name || "",
+                isQualityDocument: defaultFileType.isQualityDocument || false,
+                requiresApproval: defaultFileType.requiresApproval || false,
+                trackVersioning: defaultFileType.trackVersioning || false,
+              };
+            } else {
+              child.metadata.fileType = {
+                id: null,
                 name: "",
                 isQualityDocument: false,
                 requiresApproval: false,
                 trackVersioning: false,
               };
             }
-          } else {
-            // Invalid ObjectId, set to null
-            child.metadata.fileType = {
-              id: null,
-              name: "",
-              isQualityDocument: false,
-              requiresApproval: false,
-              trackVersioning: false,
-            };
           }
         }
         return child;
@@ -871,25 +946,28 @@ const getDocument = async (req, res) => {
 
     // Check if there's a request associated with this document
     let requestId = null;
+    let mode = null;
     try {
       const request = await Request.findOne({
         documentId: document._id.toString(),
       })
-        .select("_id")
+        .select("_id mode")
         .lean();
 
       if (request) {
         requestId = request._id.toString();
+        mode = request.mode || null;
       }
     } catch (requestError) {
       console.error("Error fetching request:", requestError);
       // Don't fail the document retrieval if request lookup fails
     }
 
-    // Add requestId to response if found
-    if (requestId) {
-      responseData.requestId = requestId;
-    }
+    // Add requestData to response
+    responseData.requestData = {
+      requestId: requestId || "",
+      mode: mode || "",
+    };
 
     // Log document retrieval to audit trail
     await postAuditTrailLog(
