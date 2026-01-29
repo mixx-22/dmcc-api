@@ -2,10 +2,11 @@ import Request from "./request.model.js";
 import { Document } from "../documents/document.model.js";
 import { VersionHistory } from "../documents/versionHistory/versionHistory.model.js";
 import { User } from "../users/user.model.js";
+import mongoose from "mongoose";
 
 const postRequest = async (req, res) => {
   try {
-    const { ...approvalData } = req.body;
+    const { documentId, ...approvalData } = req.body;
 
     // Get userId from token
     const userId = req.user?.id || req.user?._id;
@@ -20,6 +21,7 @@ const postRequest = async (req, res) => {
     // Create request with UPLOAD type and status -1
     const newRequest = new Request({
       ...approvalData,
+      documentId: documentId || "",
       type: "UPLOAD",
       status: -1,
       mode: "",
@@ -70,8 +72,26 @@ const putRequestSubmit = async (req, res) => {
     const { id } = req.params;
     const { ...updateData } = req.body;
 
-    // Find the request
-    const request = await Request.findById(id);
+    console.log("putRequestSubmit - Request ID:", id);
+
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid request ID format",
+      });
+    }
+
+    // Try to find the request by ID first, then by documentId
+    let request = await Request.findById(id);
+
+    // If not found by _id, try finding by documentId
+    if (!request) {
+      console.log("Request not found by _id, trying documentId...");
+      request = await Request.findOne({ documentId: id });
+    }
+
+    console.log("putRequestSubmit - Request found:", request ? "Yes" : "No");
 
     if (!request) {
       return res.status(404).json({
@@ -92,14 +112,17 @@ const putRequestSubmit = async (req, res) => {
 
     await request.save();
 
-    // Update the parent document if parentId exists
-    if (request.parentId && request.parentId.trim()) {
+    // Update the parent document if documentId exists
+    if (request.documentId && request.documentId.trim()) {
       try {
-        console.log("Looking for document with parentId:", request.parentId);
+        console.log(
+          "Looking for document with documentId:",
+          request.documentId,
+        );
 
         // Use findByIdAndUpdate to directly update the document
         const updatedDoc = await Document.findByIdAndUpdate(
-          request.parentId,
+          request.documentId,
           {
             $set: {
               status: 0,
@@ -112,14 +135,14 @@ const putRequestSubmit = async (req, res) => {
         if (updatedDoc) {
           console.log("Document updated successfully:", updatedDoc.metadata);
         } else {
-          console.log("Document not found for parentId:", request.parentId);
+          console.log("Document not found for documentId:", request.documentId);
         }
       } catch (docError) {
         console.error("Error updating document:", docError);
         // Don't fail the request submission if document update fails
       }
     } else {
-      console.log("No valid parentId found in request");
+      console.log("No valid documentId found in request");
     }
 
     // Populate the updated request
@@ -167,17 +190,14 @@ const getAllRequest = async (req, res) => {
     let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
     if (limit > maxLimit) limit = maxLimit;
 
-    // Keyword search (title OR description)
-    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+    // Build filter
     const filter = {};
-    if (keyword) {
-      const re = new RegExp(keyword, "i");
-      filter.$or = [{ title: re }, { description: re }];
-    }
 
-    // Filter by status if provided
+    // Filter by status (default to 0 and -1)
     if (req.query.status !== undefined) {
       filter.status = parseInt(req.query.status, 10);
+    } else {
+      filter.status = { $in: [0, -1] };
     }
 
     // Filter by type if provided
@@ -200,15 +220,12 @@ const getAllRequest = async (req, res) => {
       filter.requestedFor = req.query.requestedFor;
     }
 
-    // Filter by parentId if provided
-    if (req.query.parentId) {
-      filter.parentId = req.query.parentId;
-    }
-
+    // Get total count
     const total = await Request.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
 
-    const data = await Request.find(filter)
+    // Get requests with pagination
+    const requests = await Request.find(filter)
       .populate({
         path: "requestedBy",
         select:
@@ -232,57 +249,59 @@ const getAllRequest = async (req, res) => {
       .limit(limit)
       .sort({ createdAt: -1 });
 
-    // Merge document data with each request
-    const mergedData = await Promise.all(
-      data.map(async (request) => {
+    // Transform requests to include OwnerData
+    const transformedRequests = await Promise.all(
+      requests.map(async (request) => {
         const requestObj = request.toObject();
-        let documentData = {};
+        let ownerData = null;
 
-        // Fetch document data if parentId exists
-        if (request.parentId && request.parentId.trim()) {
+        // Get document and owner data if documentId exists
+        if (requestObj.documentId && requestObj.documentId.trim()) {
           try {
-            const document = await Document.findById(request.parentId);
-            if (document) {
-              documentData = {
-                title: document.title || "",
-                description: document.description || "",
-                metadata: document.metadata || {},
-              };
+            const document = await Document.findById(
+              requestObj.documentId,
+            ).select("owner");
+            if (document && document.owner) {
+              const owner = await User.findById(document.owner).select(
+                "fullname fullName name firstName lastName",
+              );
+
+              if (owner) {
+                const ownerName =
+                  owner.fullname ||
+                  owner.fullName ||
+                  owner.name ||
+                  `${owner.firstName || ""} ${owner.lastName || ""}`.trim();
+
+                ownerData = {
+                  id: owner._id.toString(),
+                  name: ownerName || "",
+                };
+              }
             }
           } catch (err) {
-            console.error(
-              "Error fetching document for request:",
-              request._id,
-              err,
-            );
+            console.error("Error fetching owner data:", err);
           }
         }
 
-        // Merge data: use request data if available, otherwise use document data
         return {
           ...requestObj,
-          requestId: requestObj._id,
-          mode: requestObj.mode || "",
-          title: requestObj.title || documentData.title || "",
-          description: requestObj.description || documentData.description || "",
-          metadata: {
-            ...documentData.metadata,
-            ...requestObj.metadata,
-          },
+          OwnerData: ownerData,
         };
       }),
     );
 
     return res.status(200).json({
       success: true,
-      data: mergedData,
+      message: "Requests retrieved successfully",
+      data: transformedRequests,
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
-    console.error("Error fetching requests:", error);
+    console.error("Error in getAllRequest:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch requests",
+      message: "Failed to retrieve requests",
       error: error.message,
     });
   }
@@ -321,11 +340,11 @@ const getRequest = async (req, res) => {
       });
     }
 
-    // Get document data using parentId
+    // Get document data using documentId
     let documentData = {};
-    if (request.parentId && request.parentId.trim()) {
+    if (request.documentId && request.documentId.trim()) {
       try {
-        const document = await Document.findById(request.parentId);
+        const document = await Document.findById(request.documentId);
         if (document) {
           documentData = {
             title: document.title || "",
@@ -399,10 +418,10 @@ const putRequestApproved = async (req, res) => {
 
     await request.save();
 
-    // Update the parent document if parentId exists
-    if (request.parentId) {
+    // Update the parent document if documentId exists
+    if (request.documentId) {
       try {
-        const document = await Document.findById(request.parentId);
+        const document = await Document.findById(request.documentId);
         if (document) {
           document.status = 0;
           if (!document.metadata) {
@@ -492,10 +511,10 @@ const putRequestReject = async (req, res) => {
 
     await request.save();
 
-    // Update the parent document if parentId exists
-    if (request.parentId) {
+    // Update the parent document if documentId exists
+    if (request.documentId) {
       try {
-        const document = await Document.findById(request.parentId);
+        const document = await Document.findById(request.documentId);
         if (document) {
           document.status = -1;
           if (!document.metadata) {
@@ -570,10 +589,10 @@ const putRequestDiscard = async (req, res) => {
 
     await request.save();
 
-    // Update the parent document if parentId exists
-    if (request.parentId) {
+    // Update the parent document if documentId exists
+    if (request.documentId) {
       try {
-        const document = await Document.findById(request.parentId);
+        const document = await Document.findById(request.documentId);
         if (document) {
           document.status = 2;
           if (!document.metadata) {
@@ -650,8 +669,8 @@ const putRequestPublish = async (req, res) => {
       });
     }
 
-    // Check if request has parentId (document to update)
-    if (!request.parentId) {
+    // Check if request has documentId (document to update)
+    if (!request.documentId) {
       return res.status(400).json({
         success: false,
         message: "Request does not have a parent document",
@@ -659,7 +678,7 @@ const putRequestPublish = async (req, res) => {
     }
 
     // Find the parent document
-    const document = await Document.findById(request.parentId);
+    const document = await Document.findById(request.documentId);
 
     if (!document) {
       return res.status(404).json({
@@ -692,7 +711,7 @@ const putRequestPublish = async (req, res) => {
 
     // Find or create version history for this document
     let versionHistory = await VersionHistory.findOne({
-      documentId: request.parentId,
+      documentId: request.documentId,
     });
 
     if (versionHistory) {
@@ -702,7 +721,7 @@ const putRequestPublish = async (req, res) => {
     } else {
       // Create new version history
       versionHistory = new VersionHistory({
-        documentId: request.parentId,
+        documentId: request.documentId,
         versionHistory: [versionEntry],
       });
       await versionHistory.save();

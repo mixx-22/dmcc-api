@@ -214,7 +214,7 @@ const postDocument = async (req, res) => {
 
         if (fileType && fileType.isQualityDocument === true) {
           const newRequest = new Request({
-            parentId: savedDocument._id.toString(),
+            documentId: savedDocument._id.toString(),
             title: savedDocument.title || "",
             description: savedDocument.description || "",
             metadata: savedDocument.metadata || {},
@@ -867,6 +867,28 @@ const getDocument = async (req, res) => {
         responseData.parentData = parentData;
         delete responseData.parentId;
       }
+    }
+
+    // Check if there's a request associated with this document
+    let requestId = null;
+    try {
+      const request = await Request.findOne({
+        documentId: document._id.toString(),
+      })
+        .select("_id")
+        .lean();
+
+      if (request) {
+        requestId = request._id.toString();
+      }
+    } catch (requestError) {
+      console.error("Error fetching request:", requestError);
+      // Don't fail the document retrieval if request lookup fails
+    }
+
+    // Add requestId to response if found
+    if (requestId) {
+      responseData.requestId = requestId;
     }
 
     // Log document retrieval to audit trail

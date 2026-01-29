@@ -135,11 +135,21 @@ const getAllOrganization = async (req, res) => {
           let auditorIds = [];
 
           if (Array.isArray(orgObj.auditors)) {
-            auditorIds = orgObj.auditors;
+            auditorIds = orgObj.auditors
+              .map((auditor) =>
+                typeof auditor === "object" && auditor.id
+                  ? auditor.id
+                  : auditor,
+              )
+              .filter((id) => id && mongoose.Types.ObjectId.isValid(id));
           } else if (typeof orgObj.auditors === "object") {
-            auditorIds = Object.values(orgObj.auditors).filter(
-              (id) => id && mongoose.Types.ObjectId.isValid(id),
-            );
+            auditorIds = Object.values(orgObj.auditors)
+              .map((auditor) =>
+                typeof auditor === "object" && auditor.id
+                  ? auditor.id
+                  : auditor,
+              )
+              .filter((id) => id && mongoose.Types.ObjectId.isValid(id));
           }
 
           if (auditorIds.length > 0) {
@@ -328,7 +338,10 @@ const putOrganization = async (req, res) => {
     } = req.body;
 
     if (auditScheduleId !== undefined) org.auditScheduleId = auditScheduleId;
-    if (team !== undefined) org.team = team;
+    if (team !== undefined) {
+      // Extract team ID if team is an object, otherwise use it directly
+      org.team = typeof team === "object" && team.id ? team.id : team;
+    }
     if (status !== undefined) org.status = status;
     if (auditors !== undefined) {
       org.auditors = auditors;

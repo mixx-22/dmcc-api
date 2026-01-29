@@ -16,10 +16,29 @@ const router = Router();
 router.route("").post(authenticate, postRequest);
 router.route("").get(authenticate, getAllRequest);
 router.route("/:id").get(authenticate, getRequest);
-router.route("/:id/submit").put(authenticate, putRequestSubmit);
-router.route("/:id/approve").put(authenticate, putRequestApproved);
-router.route("/:id/reject").put(authenticate, putRequestReject);
-router.route("/:id/discard").put(authenticate, putRequestDiscard);
-router.route("/:id/publish").put(authenticate, putRequestPublish);
+router.route("/:id").put(authenticate, (req, res) => {
+  const { type } = req.query;
+
+  switch (type) {
+    case "submit":
+      return putRequestSubmit(req, res);
+    case "approve":
+      return putRequestApproved(req, res);
+    case "reject":
+      return putRequestReject(req, res);
+    case "discard":
+      return putRequestDiscard(req, res);
+    case "publish":
+      return putRequestPublish(req, res);
+    default:
+      return res.status(400).json({ message: "Invalid request type" });
+  }
+});
+
+router.route("/submit/:id").put(authenticate, putRequestSubmit);
+router.route("/approve/:id").put(authenticate, putRequestApproved);
+router.route("/reject/:id").put(authenticate, putRequestReject);
+router.route("/discard/:id").put(authenticate, putRequestDiscard);
+router.route("/publish/:id").put(authenticate, putRequestPublish);
 
 export default router;
