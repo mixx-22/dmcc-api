@@ -1604,6 +1604,7 @@ const getQualityDocument = async (req, res) => {
     const filter = {
       type: "file",
       deletedAt: null,
+      status: 2,
     };
 
     // Add fileType filter with $or to handle both ObjectId and string
