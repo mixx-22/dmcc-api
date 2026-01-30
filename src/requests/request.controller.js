@@ -201,9 +201,11 @@ const getAllRequest = async (req, res) => {
       filter.status = { $in: [0, -1, 1] };
     }
 
-    // Filter by type if provided
+    // Filter by type if provided, but always exclude DISCARD
     if (req.query.type) {
       filter.type = req.query.type;
+    } else {
+      filter.type = { $ne: "DISCARD" };
     }
 
     // Filter by mode if provided
