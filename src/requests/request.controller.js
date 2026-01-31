@@ -13,10 +13,80 @@ const postRequest = async (req, res) => {
     const userId = req.user?.id || req.user?._id;
 
     if (!userId) {
-      return res.status(401).json({
+      return res.status(400).json({
         success: false,
         message: "Unauthorized: User not found",
       });
+    }
+
+    console.log(
+      "postRequest - approvalData:",
+      JSON.stringify(approvalData, null, 2),
+    );
+
+    // Check for duplicate document number if documentNumber exists in metadata
+    if (approvalData.metadata?.documentNumber) {
+      const documentNumber = approvalData.metadata.documentNumber
+        .toString()
+        .trim();
+
+      console.log("Checking for duplicate document number:", documentNumber);
+
+      if (!documentNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Document number cannot be empty",
+        });
+      }
+
+      // Escape special regex characters
+      const escapedDocNumber = documentNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+
+      // Check for case-insensitive duplicate document number in Documents
+      const existingDocument = await Document.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        deletedAt: null,
+      });
+
+      console.log("Existing document found:", existingDocument?._id);
+
+      if (existingDocument) {
+        return res.status(400).json({
+          success: false,
+          message: "Document number already exists in documents",
+          documentNumber: documentNumber,
+          existingDocumentId: existingDocument._id,
+        });
+      }
+
+      // Check for case-insensitive duplicate document number in Requests (exclude DISCARD type)
+      const existingRequest = await Request.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        type: { $ne: "DISCARD" },
+      });
+
+      console.log("Existing request found:", existingRequest?._id);
+
+      if (existingRequest) {
+        return res.status(400).json({
+          success: false,
+          message: "Document number already exists in pending requests",
+          documentNumber: documentNumber,
+          existingRequestId: existingRequest._id,
+          existingRequestStatus: existingRequest.status,
+          existingRequestType: existingRequest.type,
+        });
+      }
+
+      // Update the document number with trimmed value
+      approvalData.metadata.documentNumber = documentNumber;
     }
 
     // Create request with UPLOAD type and status -1
@@ -194,17 +264,41 @@ const getAllRequest = async (req, res) => {
     // Build filter
     const filter = {};
 
-    // Filter by status (default to 0 and -1)
+    // Check if type is "history" - if so, show all statuses and include DISCARD
+    const isHistoryView = req.query.type === "history";
+
+    // Filter by status (default to 0 and -1, unless history view)
     if (req.query.status !== undefined) {
-      filter.status = parseInt(req.query.status, 10);
-    } else {
+      const statusParam = req.query.status;
+
+      // Map string status to numeric values
+      if (statusParam === "pending-approval") {
+        filter.status = 0;
+      } else if (statusParam === "approved") {
+        filter.status = 1;
+      } else if (statusParam === "draft" || statusParam === "rejected") {
+        filter.status = -1;
+      } else if (statusParam === "published") {
+        filter.status = 2;
+      } else {
+        // Try to parse as number
+        const parsedStatus = parseInt(statusParam, 10);
+        if (!isNaN(parsedStatus)) {
+          filter.status = parsedStatus;
+        } else {
+          // If not a valid string or number, use default
+          filter.status = { $in: [0, -1, 1] };
+        }
+      }
+    } else if (!isHistoryView) {
+      // Only apply default status filter if not history view
       filter.status = { $in: [0, -1, 1] };
     }
 
-    // Filter by type if provided, but always exclude DISCARD
-    if (req.query.type) {
+    // Filter by type if provided, but exclude DISCARD unless history view
+    if (req.query.type && req.query.type !== "history") {
       filter.type = req.query.type;
-    } else {
+    } else if (!isHistoryView) {
       filter.type = { $ne: "DISCARD" };
     }
 
@@ -252,7 +346,7 @@ const getAllRequest = async (req, res) => {
       .limit(limit)
       .sort({ createdAt: -1 });
 
-    // Transform requests to include OwnerData
+    // Transform requests to include OwnerData and teamData
     const transformedRequests = await Promise.all(
       requests.map(async (request) => {
         const requestObj = request.toObject();
@@ -263,7 +357,7 @@ const getAllRequest = async (req, res) => {
           try {
             const document = await Document.findById(
               requestObj.documentId,
-            ).select("owner");
+            ).select("owner metadata");
             if (document && document.owner) {
               const owner = await User.findById(document.owner).select(
                 "fullname fullName name firstName lastName",
@@ -280,6 +374,50 @@ const getAllRequest = async (req, res) => {
                   id: owner._id.toString(),
                   name: ownerName || "",
                 };
+              }
+            }
+
+            // Transform metadata.team to teamData if it exists
+            if (document && document.metadata?.team) {
+              const team = document.metadata.team;
+              let teamId;
+
+              // Check if it's already an object with id property
+              if (typeof team === "object" && team.id) {
+                teamId = team.id.toString();
+              } else {
+                teamId = team.toString();
+              }
+
+              // Only transform if it's a valid ObjectId
+              if (mongoose.Types.ObjectId.isValid(teamId)) {
+                const { Team } = await import("../teams/team.model.js");
+                const teamData = await Team.findById(teamId).select("_id name");
+
+                if (teamData) {
+                  requestObj.metadata = requestObj.metadata || {};
+                  requestObj.metadata.teamData = {
+                    id: teamData._id.toString(),
+                    name: teamData.name || "",
+                  };
+                  // Remove the original team field
+                  delete requestObj.metadata.team;
+                } else {
+                  requestObj.metadata = requestObj.metadata || {};
+                  requestObj.metadata.teamData = {
+                    id: teamId,
+                    name: "",
+                  };
+                  delete requestObj.metadata.team;
+                }
+              } else {
+                // If invalid, set to null or empty object
+                requestObj.metadata = requestObj.metadata || {};
+                requestObj.metadata.teamData = {
+                  id: null,
+                  name: "",
+                };
+                delete requestObj.metadata.team;
               }
             }
           } catch (err) {
@@ -681,7 +819,7 @@ const putRequestPublish = async (req, res) => {
     }
 
     // Check if request has documentId (document to update)
-    if (!request.documentId) {
+    if (!request.documentId || request.documentId.trim() === "") {
       return res.status(400).json({
         success: false,
         message: "Request does not have a parent document",

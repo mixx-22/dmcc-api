@@ -128,6 +128,96 @@ const postDocument = async (req, res) => {
     // Use metadata as provided (expects key to be in metadata)
     let finalMetadata = metadata || {};
 
+    console.log(
+      "postDocument - finalMetadata:",
+      JSON.stringify(finalMetadata, null, 2),
+    );
+
+    // Check for duplicate document number if documentNumber exists in metadata
+    if (finalMetadata.documentNumber) {
+      const documentNumber = finalMetadata.documentNumber.toString().trim();
+
+      console.log("Checking for duplicate document number:", documentNumber);
+
+      if (!documentNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Document number cannot be empty",
+        });
+      }
+
+      // Escape special regex characters
+      const escapedDocNumber = documentNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+
+      console.log("Escaped document number:", escapedDocNumber);
+
+      // Check for case-insensitive duplicate document number in Documents
+      const existingDocument = await Document.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        deletedAt: null,
+      });
+
+      console.log("Existing document found:", existingDocument?._id);
+      if (existingDocument) {
+        console.log(
+          "Existing document number:",
+          existingDocument.metadata?.documentNumber,
+        );
+      }
+
+      if (existingDocument) {
+        console.log("RETURNING 400 ERROR - DUPLICATE FOUND");
+        return res.status(400).json({
+          success: false,
+          message: `Document number(s) already exist in the system: ${existingDocument.metadata?.documentNumber}. Please use unique value.`,
+          documentNumber: documentNumber,
+          existingDocumentId: existingDocument._id,
+          existingDocumentNumber: existingDocument.metadata?.documentNumber,
+        });
+      }
+
+      console.log("No existing document found, continuing...");
+
+      // Check for case-insensitive duplicate document number in Requests (exclude DISCARD and PUBLISH type)
+      const existingRequest = await Request.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        type: { $nin: ["DISCARD", "PUBLISH"] },
+      });
+
+      console.log("Existing request found:", existingRequest?._id);
+      if (existingRequest) {
+        console.log(
+          "Existing request number:",
+          existingRequest.metadata?.documentNumber,
+        );
+        console.log("Existing request type:", existingRequest.type);
+      }
+
+      if (existingRequest) {
+        return res.status(400).json({
+          success: false,
+          message: `Document number(s) already exist in the system: ${existingRequest.metadata?.documentNumber}. Please use unique value.`,
+          documentNumber: documentNumber,
+          existingRequestId: existingRequest._id,
+          existingRequestNumber: existingRequest.metadata?.documentNumber,
+          existingRequestType: existingRequest.type,
+        });
+      }
+
+      // Update the document number with trimmed value
+      finalMetadata.documentNumber = documentNumber;
+      console.log("Document number validation passed");
+    } else {
+      console.log("No document number provided in metadata");
+    }
+
     // Set default checkedOut value for file type
     if (type === "file" && finalMetadata.checkedOut === undefined) {
       finalMetadata.checkedOut = 1;
@@ -1579,6 +1669,15 @@ const getQualityDocument = async (req, res) => {
     // keyword search
     const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
 
+    // documentNumber search
+    const documentNumber = (req.query.documentNumber ?? "").toString().trim();
+
+    // teamId filter
+    const teamId = (req.query.teamId ?? "").toString().trim();
+
+    // published filter (0 or 1)
+    const published = req.query.published;
+
     // First, get all FileTypes where isQualityDocument is true
     const qualityFileTypes = await FileType.find({
       isQualityDocument: true,
@@ -1615,8 +1714,21 @@ const getQualityDocument = async (req, res) => {
       ],
     };
 
-    // Add keyword search if provided
-    if (keyword) {
+    // Add documentNumber search if provided (exact match)
+    if (documentNumber) {
+      const escapedDocNumber = documentNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      filter.$and = [
+        fileTypeFilter,
+        {
+          "metadata.documentNumber": {
+            $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+          },
+        },
+      ];
+    } else if (keyword) {
       const re = new RegExp(keyword, "i");
       // Combine fileType filter with keyword search
       filter.$and = [
@@ -1632,6 +1744,27 @@ const getQualityDocument = async (req, res) => {
     } else {
       // Just use fileType filter
       Object.assign(filter, fileTypeFilter);
+    }
+
+    // Filter by teamId if provided
+    if (teamId) {
+      if (mongoose.Types.ObjectId.isValid(teamId)) {
+        filter["metadata.team"] = teamId;
+      }
+    }
+
+    // Filter by published status
+    if (published !== undefined) {
+      const publishedValue = parseInt(published, 10);
+      if (publishedValue === 0) {
+        // status=2 AND checkedOut=0
+        filter.status = 2;
+        filter["metadata.checkedOut"] = 0;
+      } else if (publishedValue === 1) {
+        // status=2 AND checkedOut=1
+        filter.status = 2;
+        filter["metadata.checkedOut"] = 1;
+      }
     }
 
     const total = await Document.countDocuments(filter);
