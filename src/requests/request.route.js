@@ -7,6 +7,7 @@ import {
   putRequestApproved,
   putRequestReject,
   putRequestDiscard,
+  putRequestCheckedOut,
   putRequestPublish,
 } from "./request.controller.js";
 import { authenticate } from "../users/user.controller.js";
@@ -28,6 +29,8 @@ router.route("/:id").put(authenticate, (req, res) => {
       return putRequestReject(req, res);
     case "discard":
       return putRequestDiscard(req, res);
+    case "checked-out":
+      return putRequestCheckedOut(req, res);
     case "publish":
       return putRequestPublish(req, res);
     default:
@@ -39,6 +42,7 @@ router.route("/submit/:id").put(authenticate, putRequestSubmit);
 router.route("/approve/:id").put(authenticate, putRequestApproved);
 router.route("/reject/:id").put(authenticate, putRequestReject);
 router.route("/discard/:id").put(authenticate, putRequestDiscard);
+router.route("/checkedout/:id").put(authenticate, putRequestCheckedOut);
 router.route("/publish/:id").put(authenticate, putRequestPublish);
 
 export default router;

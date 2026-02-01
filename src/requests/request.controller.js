@@ -89,6 +89,11 @@ const postRequest = async (req, res) => {
       approvalData.metadata.documentNumber = documentNumber;
     }
 
+    // Remove checkedOut from metadata if it exists (should not be stored in request)
+    if (approvalData.metadata?.checkedOut !== undefined) {
+      delete approvalData.metadata.checkedOut;
+    }
+
     // Create request with UPLOAD type and status -1
     const newRequest = new Request({
       ...approvalData,
@@ -177,6 +182,11 @@ const putRequestSubmit = async (req, res) => {
       });
     }
 
+    // Remove checkedOut from metadata if it exists (should not be stored in request)
+    if (updateData.metadata?.checkedOut !== undefined) {
+      delete updateData.metadata.checkedOut;
+    }
+
     // Update all fields from request body
     Object.keys(updateData).forEach((key) => {
       request[key] = updateData[key];
@@ -210,7 +220,23 @@ const putRequestSubmit = async (req, res) => {
         );
 
         if (updatedDoc) {
-          console.log("Document updated successfully:", updatedDoc.metadata);
+          console.log(
+            "Document updated successfully. Status:",
+            updatedDoc.status,
+            "CheckedOut:",
+            updatedDoc.metadata?.checkedOut,
+          );
+
+          // Verify the update by reading it again
+          const verifyDoc = await Document.findById(request.documentId).select(
+            "status metadata.checkedOut",
+          );
+          console.log(
+            "Verification after update. Status:",
+            verifyDoc?.status,
+            "CheckedOut:",
+            verifyDoc?.metadata?.checkedOut,
+          );
         } else {
           console.log("Document not found for documentId:", request.documentId);
         }
@@ -222,8 +248,8 @@ const putRequestSubmit = async (req, res) => {
       console.log("No valid documentId found in request");
     }
 
-    // Populate the updated request
-    const populatedRequest = await Request.findById(id)
+    // Populate the updated request using request._id (not the parameter id which might be documentId)
+    const populatedRequest = await Request.findById(request._id)
       .populate({
         path: "requestedBy",
         select:
@@ -608,6 +634,11 @@ const putRequestApproved = async (req, res) => {
       });
     }
 
+    // Remove checkedOut from request metadata if it exists
+    if (request.metadata?.checkedOut !== undefined) {
+      delete request.metadata.checkedOut;
+    }
+
     // Update with approval fields
     request.type = "APPROVED";
     request.status = 1;
@@ -615,26 +646,45 @@ const putRequestApproved = async (req, res) => {
     request.reviewedBy = userId;
     request.reviewedDate = new Date();
 
-    await request.save();
-
     // Update the parent document if documentId exists
     if (request.documentId) {
       try {
-        const document = await Document.findById(request.documentId);
-        if (document) {
-          document.status = 0;
-          if (!document.metadata) {
-            document.metadata = {};
+        console.log("Updating document with documentId:", request.documentId);
+
+        // Use findByIdAndUpdate to directly update the document
+        const updatedDoc = await Document.findByIdAndUpdate(
+          request.documentId,
+          {
+            $set: {
+              status: 0,
+              "metadata.checkedOut": 0,
+            },
+          },
+          { new: true, runValidators: false },
+        );
+
+        if (updatedDoc) {
+          console.log(
+            "Document updated successfully. Status:",
+            updatedDoc.status,
+            "CheckedOut:",
+            updatedDoc.metadata?.checkedOut,
+          );
+
+          // Also update request's metadata to match document
+          if (request.metadata) {
+            request.metadata.checkedOut = 0;
           }
-          document.metadata.checkedOut = 0;
-          document.markModified("metadata");
-          await document.save();
+        } else {
+          console.log("Document not found for documentId:", request.documentId);
         }
       } catch (docError) {
         console.error("Error updating document:", docError);
         // Don't fail the request approval if document update fails
       }
     }
+
+    await request.save();
 
     // Populate the updated request
     const populatedRequest = await Request.findById(id)
@@ -658,10 +708,34 @@ const putRequestApproved = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Request approved successfully",
       data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest?.mode || "",
     });
   } catch (error) {
     console.error("Error approving request:", error);
@@ -696,6 +770,11 @@ const putRequestReject = async (req, res) => {
         success: false,
         message: "Request not found",
       });
+    }
+
+    // Remove checkedOut from request metadata if it exists
+    if (request.metadata?.checkedOut !== undefined) {
+      delete request.metadata.checkedOut;
     }
 
     // Update with rejection fields
@@ -751,10 +830,34 @@ const putRequestReject = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Request rejected successfully",
       data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest?.mode || "",
     });
   } catch (error) {
     console.error("Error rejecting request:", error);
@@ -778,6 +881,11 @@ const putRequestDiscard = async (req, res) => {
         success: false,
         message: "Request not found",
       });
+    }
+
+    // Remove checkedOut from request metadata if it exists
+    if (request.metadata?.checkedOut !== undefined) {
+      delete request.metadata.checkedOut;
     }
 
     // Update with discard fields
@@ -837,16 +945,156 @@ const putRequestDiscard = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Request discarded successfully",
       data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest?.mode || "",
     });
   } catch (error) {
     console.error("Error discarding request:", error);
     return res.status(500).json({
       success: false,
       message: "Failed to discard request",
+      error: error.message,
+    });
+  }
+};
+
+const putRequestCheckedOut = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Get userId from token
+    const userId = req.user?.id || req.user?._id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: User not found",
+      });
+    }
+
+    // Find the request
+    const request = await Request.findById(id);
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: "Request not found",
+      });
+    }
+
+    // Remove checkedOut from request metadata if it exists
+    if (request.metadata?.checkedOut !== undefined) {
+      delete request.metadata.checkedOut;
+    }
+
+    // Update with checked out fields
+    request.type = "REVISE";
+    request.status = -1;
+    request.mode = "CHECKEDOUT";
+
+    await request.save();
+
+    // Update the parent document if documentId exists
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId);
+        if (document) {
+          document.status = -1;
+          if (!document.metadata) {
+            document.metadata = {};
+          }
+          document.metadata.checkedOut = 1;
+          document.markModified("metadata");
+          await document.save();
+        }
+      } catch (docError) {
+        console.error("Error updating document:", docError);
+        // Don't fail the request if document update fails
+      }
+    }
+
+    // Populate the updated request
+    const populatedRequest = await Request.findById(id)
+      .populate({
+        path: "requestedBy",
+        select:
+          "fullname fullName name firstName lastName middleName employeeId",
+      })
+      .populate({
+        path: "requestedFor",
+        select: "name",
+      })
+      .populate({
+        path: "reviewedBy",
+        select:
+          "fullname fullName name firstName lastName middleName employeeId",
+      })
+      .populate({
+        path: "publishedBy",
+        select:
+          "fullname fullName name firstName lastName middleName employeeId",
+      });
+
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Request checked out successfully",
+      data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest?.mode || "",
+    });
+  } catch (error) {
+    console.error("Error checking out request:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to check out request",
       error: error.message,
     });
   }
@@ -938,6 +1186,12 @@ const putRequestPublish = async (req, res) => {
     document.title = request.title || document.title;
     document.description = request.description || document.description;
     document.metadata = request.metadata || document.metadata;
+    document.status = 2; // Set status to published
+    if (!document.metadata) {
+      document.metadata = {};
+    }
+    document.metadata.checkedOut = 0; // Set checkedOut to 0
+    document.metadata.version = `${versionHistory.versionHistory.length}.0`; // Save version number in format "1.0"
     document.owner = request.requestedBy; // Update owner to the requester
     document.updatedAt = new Date();
 
@@ -947,6 +1201,11 @@ const putRequestPublish = async (req, res) => {
     }
 
     await document.save();
+
+    // Remove checkedOut from request metadata if it exists
+    if (request.metadata?.checkedOut !== undefined) {
+      delete request.metadata.checkedOut;
+    }
 
     // Update request with publish fields
     request.type = "PUBLISH";
@@ -979,10 +1238,34 @@ const putRequestPublish = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Request published successfully",
       data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest?.mode || "",
     });
   } catch (error) {
     console.error("Error publishing request:", error);
@@ -1002,5 +1285,6 @@ export {
   putRequestApproved,
   putRequestReject,
   putRequestDiscard,
+  putRequestCheckedOut,
   putRequestPublish,
 };
