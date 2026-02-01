@@ -351,82 +351,101 @@ const getAllRequest = async (req, res) => {
       requests.map(async (request) => {
         const requestObj = request.toObject();
         let ownerData = null;
+        let documentData = {
+          id: "",
+          title: "",
+        };
 
         // Get document and owner data if documentId exists
         if (requestObj.documentId && requestObj.documentId.trim()) {
           try {
             const document = await Document.findById(
               requestObj.documentId,
-            ).select("owner metadata");
-            if (document && document.owner) {
-              const owner = await User.findById(document.owner).select(
-                "fullname fullName name firstName lastName",
-              );
+            ).select("owner metadata title");
 
-              if (owner) {
-                const ownerName =
-                  owner.fullname ||
-                  owner.fullName ||
-                  owner.name ||
-                  `${owner.firstName || ""} ${owner.lastName || ""}`.trim();
+            if (document) {
+              // Set documentData
+              documentData = {
+                id: document._id.toString(),
+                title: document.title || "",
+              };
 
-                ownerData = {
-                  id: owner._id.toString(),
-                  name: ownerName || "",
-                };
-              }
-            }
+              // Get owner data
+              if (document.owner) {
+                const owner = await User.findById(document.owner).select(
+                  "fullname fullName name firstName lastName",
+                );
 
-            // Transform metadata.team to teamData if it exists
-            if (document && document.metadata?.team) {
-              const team = document.metadata.team;
-              let teamId;
+                if (owner) {
+                  const ownerName =
+                    owner.fullname ||
+                    owner.fullName ||
+                    owner.name ||
+                    `${owner.firstName || ""} ${owner.lastName || ""}`.trim();
 
-              // Check if it's already an object with id property
-              if (typeof team === "object" && team.id) {
-                teamId = team.id.toString();
-              } else {
-                teamId = team.toString();
-              }
-
-              // Only transform if it's a valid ObjectId
-              if (mongoose.Types.ObjectId.isValid(teamId)) {
-                const { Team } = await import("../teams/team.model.js");
-                const teamData = await Team.findById(teamId).select("_id name");
-
-                if (teamData) {
-                  requestObj.metadata = requestObj.metadata || {};
-                  requestObj.metadata.teamData = {
-                    id: teamData._id.toString(),
-                    name: teamData.name || "",
+                  ownerData = {
+                    id: owner._id.toString(),
+                    name: ownerName || "",
                   };
-                  // Remove the original team field
-                  delete requestObj.metadata.team;
+                }
+              }
+
+              // Transform metadata.team to teamData if it exists
+              if (document.metadata?.team) {
+                const team = document.metadata.team;
+                let teamId;
+
+                // Check if it's already an object with id property
+                if (typeof team === "object" && team.id) {
+                  teamId = team.id.toString();
                 } else {
+                  teamId = team.toString();
+                }
+
+                // Only transform if it's a valid ObjectId
+                if (mongoose.Types.ObjectId.isValid(teamId)) {
+                  const { Team } = await import("../teams/team.model.js");
+                  const teamData =
+                    await Team.findById(teamId).select("_id name");
+
+                  if (teamData) {
+                    requestObj.metadata = requestObj.metadata || {};
+                    requestObj.metadata.teamData = {
+                      id: teamData._id.toString(),
+                      name: teamData.name || "",
+                    };
+                    // Remove the original team field
+                    delete requestObj.metadata.team;
+                  } else {
+                    requestObj.metadata = requestObj.metadata || {};
+                    requestObj.metadata.teamData = {
+                      id: teamId,
+                      name: "",
+                    };
+                    delete requestObj.metadata.team;
+                  }
+                } else {
+                  // If invalid, set to null or empty object
                   requestObj.metadata = requestObj.metadata || {};
                   requestObj.metadata.teamData = {
-                    id: teamId,
+                    id: null,
                     name: "",
                   };
                   delete requestObj.metadata.team;
                 }
-              } else {
-                // If invalid, set to null or empty object
-                requestObj.metadata = requestObj.metadata || {};
-                requestObj.metadata.teamData = {
-                  id: null,
-                  name: "",
-                };
-                delete requestObj.metadata.team;
               }
             }
           } catch (err) {
-            console.error("Error fetching owner data:", err);
+            console.error("Error fetching document data:", err);
           }
         }
 
+        // Remove documentId and add documentData
+        const { documentId, ...restObj } = requestObj;
+
         return {
-          ...requestObj,
+          ...restObj,
+          documentData,
           OwnerData: ownerData,
         };
       }),
