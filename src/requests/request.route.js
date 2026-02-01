@@ -42,3 +42,9 @@ router.route("/discard/:id").put(authenticate, putRequestDiscard);
 router.route("/publish/:id").put(authenticate, putRequestPublish);
 
 export default router;
+
+// /requests/:id?type=submit
+// /requests/:id?type=approve
+// /requests/:id?type=reject
+// /requests/:id?type=discard
+// /requests/:id?type=publish

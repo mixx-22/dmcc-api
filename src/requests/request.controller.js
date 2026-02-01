@@ -92,6 +92,7 @@ const postRequest = async (req, res) => {
     // Create request with UPLOAD type and status -1
     const newRequest = new Request({
       ...approvalData,
+      id: documentId || "",
       documentId: documentId || "",
       type: "UPLOAD",
       status: -1,
@@ -123,10 +124,15 @@ const postRequest = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    const responseData = {
+      ...populatedRequest.toObject(),
+      id: populatedRequest.id || populatedRequest.documentId || "",
+    };
+
     return res.status(201).json({
       success: true,
       message: "Request created successfully",
-      data: populatedRequest,
+      data: responseData,
     });
   } catch (error) {
     console.error("Error creating request:", error);
@@ -238,10 +244,41 @@ const putRequestSubmit = async (req, res) => {
           "fullname fullName name firstName lastName middleName employeeId",
       });
 
+    if (!populatedRequest) {
+      return res.status(404).json({
+        success: false,
+        message: "Request not found after update",
+      });
+    }
+
+    // Get document details for response
+    let documentStatus = "";
+    let documentCheckedOut = 0;
+
+    if (request.documentId && request.documentId.trim()) {
+      try {
+        const document = await Document.findById(request.documentId).select(
+          "status metadata",
+        );
+        if (document) {
+          documentStatus = document.status !== undefined ? document.status : "";
+          documentCheckedOut =
+            document.metadata?.checkedOut !== undefined
+              ? document.metadata.checkedOut
+              : 0;
+        }
+      } catch (err) {
+        console.error("Error fetching document for response:", err);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Request submitted successfully",
       data: populatedRequest,
+      status: documentStatus,
+      checkedOut: documentCheckedOut,
+      mode: populatedRequest.mode || "",
     });
   } catch (error) {
     console.error("Error submitting request:", error);
@@ -445,6 +482,7 @@ const getAllRequest = async (req, res) => {
 
         return {
           ...restObj,
+          id: requestObj._id.toString(),
           documentData,
           OwnerData: ownerData,
         };
@@ -521,6 +559,7 @@ const getRequest = async (req, res) => {
     const requestObj = request.toObject();
     const combinedData = {
       ...requestObj,
+      id: requestObj.id || requestObj.documentId || "",
       requestId: requestObj._id,
       mode: requestObj.mode || "",
       title: requestObj.title || documentData.title || "",

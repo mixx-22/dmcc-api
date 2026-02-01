@@ -38,7 +38,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
     // Formula: (Completed audits / Total audits) * 100
     const totalOrganizations = organizations.length;
     const completedOrganizations = organizations.filter(
-      (org) => org.status === "completed" || org.status === 2,
+      (org) =>
+        org.status === "completed" || org.status === 2 || org.status === 3,
     ).length;
     const auditCompletionRate =
       totalOrganizations > 0

@@ -188,9 +188,26 @@ export const getLatestAuditKpis = async (req, res) => {
 
     // Calculate combined schedule KPIs
     const totalOrganizations = allOrganizations.length;
+
+    // Log status values to debug completion rate
+    console.log(
+      "[KPI Dashboard] Organization statuses:",
+      allOrganizations.map((org) => ({
+        team: org.team,
+        status: org.status,
+        statusType: typeof org.status,
+      })),
+    );
+
     const completedOrganizations = allOrganizations.filter(
-      (org) => org.status === "completed" || org.status === 2,
+      (org) =>
+        org.status === "completed" || org.status === 2 || org.status === 3,
     ).length;
+
+    console.log(
+      `[KPI Dashboard] Completed organizations: ${completedOrganizations} out of ${totalOrganizations}`,
+    );
+
     const auditCompletionRate =
       totalOrganizations > 0
         ? ((completedOrganizations / totalOrganizations) * 100).toFixed(2)

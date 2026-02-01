@@ -55,11 +55,11 @@ const documentSchema = new mongoose.Schema(
     permissionOverrides: {
       readOnly: {
         type: Number,
-        default: 0,
+        default: 1,
       },
       restricted: {
         type: Number,
-        default: 0,
+        default: 1,
       },
     },
     metadata: {

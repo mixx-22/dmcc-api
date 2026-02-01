@@ -2,6 +2,10 @@ import mongoose from "mongoose";
 
 const approvalSchema = new mongoose.Schema(
   {
+    id: {
+      type: String,
+      default: "", // the id of the record
+    },
     documentId: {
       type: String,
       default: "",
