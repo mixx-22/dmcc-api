@@ -81,6 +81,18 @@ const getAllSchedule = async (req, res) => {
       ];
     }
 
+    // Year filtering
+    if (req.query.year) {
+      const year = parseInt(req.query.year, 10);
+      if (!isNaN(year)) {
+        // Filter schedules where date.start year matches
+        filter["date.start"] = {
+          $gte: new Date(`${year}-01-01T00:00:00.000Z`),
+          $lt: new Date(`${year + 1}-01-01T00:00:00.000Z`),
+        };
+      }
+    }
+
     const total = await Schedule.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
 
@@ -236,10 +248,60 @@ const deleteSchedule = async (req, res) => {
   }
 };
 
+const getAvailableYears = async (req, res) => {
+  try {
+    // Aggregate to get unique years from date.start field
+    const yearsData = await Schedule.aggregate([
+      // Filter out deleted schedules
+      {
+        $match: {
+          deletedAt: null,
+          "date.start": { $exists: true, $ne: null },
+        },
+      },
+      // Extract year from date.start
+      {
+        $project: {
+          year: { $year: "$date.start" },
+        },
+      },
+      // Group by year to get unique values
+      {
+        $group: {
+          _id: "$year",
+        },
+      },
+      // Sort descending (newest first)
+      {
+        $sort: { _id: -1 },
+      },
+    ]);
+
+    // Extract years from aggregation result
+    const years = yearsData.map((item) => item._id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Available years retrieved successfully",
+      data: {
+        years,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getAvailableYears:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve available years",
+      error: error.message,
+    });
+  }
+};
+
 export {
   postSchedule,
   getAllSchedule,
   getSchedule,
   putSchedule,
   deleteSchedule,
+  getAvailableYears,
 };

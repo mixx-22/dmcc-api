@@ -28,6 +28,17 @@ const scheduleSchema = new Schema(
       default: "",
     },
 
+    date: {
+      start: {
+        type: Date,
+        default: null,
+      },
+      end: {
+        type: Date,
+        default: null,
+      },
+    },
+
     organizations: {
       type: Schema.Types.Mixed,
       default: () => ({}),
