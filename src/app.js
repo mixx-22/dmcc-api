@@ -71,6 +71,7 @@ import teamStatRoutes from "./teams/team-stat/teamStat.route.js";
 import scheduleRoutes from "./audit/schedule/schedule.route.js";
 import organizationRoutes from "./audit/schedule/organization/org.route.js";
 import requestRoutes from "./requests/request.route.js";
+import standardRoutes from "./audit/schedule/Standard/standard.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -85,5 +86,6 @@ app.use("/team-stats", teamStatRoutes);
 app.use("/schedules", scheduleRoutes);
 app.use("/organizations", organizationRoutes);
 app.use("/request", requestRoutes);
+app.use("/standards", standardRoutes);
 
 export default app;
