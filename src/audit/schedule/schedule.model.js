@@ -24,8 +24,8 @@ const scheduleSchema = new Schema(
     },
 
     standard: {
-      type: String,
-      default: "",
+      type: Schema.Types.Mixed,
+      default: () => ({}),
     },
 
     date: {
@@ -40,6 +40,11 @@ const scheduleSchema = new Schema(
     },
 
     organizations: {
+      type: Schema.Types.Mixed,
+      default: () => ({}),
+    },
+
+    previousAudit: {
       type: Schema.Types.Mixed,
       default: () => ({}),
     },

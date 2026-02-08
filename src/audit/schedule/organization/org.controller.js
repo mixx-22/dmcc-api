@@ -89,8 +89,8 @@ const getAllOrganization = async (req, res) => {
     }
 
     // Filter by team if provided
-    if (req.query.team) {
-      filter.team = req.query.team;
+    if (req.query.teamId || req.query.team) {
+      filter.team = req.query.teamId || req.query.team;
     }
 
     // Filter by status if provided
@@ -105,7 +105,7 @@ const getAllOrganization = async (req, res) => {
       .populate("auditScheduleId", "title")
       .populate(
         "team",
-        "name description folderId folderTitle objectives updatedAt",
+        "name description folderId folderTitle objectives updatedAt leaders",
       )
       .skip((page - 1) * limit)
       .limit(limit)
@@ -118,6 +118,34 @@ const getAllOrganization = async (req, res) => {
 
         // Transform team data
         if (orgObj.team && orgObj.team._id) {
+          let leadersData = [];
+
+          if (Array.isArray(orgObj.team.leaders)) {
+            const leaderIds = orgObj.team.leaders.filter((id) =>
+              mongoose.Types.ObjectId.isValid(id),
+            );
+
+            if (leaderIds.length > 0) {
+              const leaders = await User.find({
+                _id: { $in: leaderIds },
+                deletedAt: null,
+              }).select("firstName lastName fullname fullName name employeeId");
+
+              leadersData = leaders.map((user) => {
+                const firstName = user.firstName || "";
+                const lastName = user.lastName || "";
+                const name = `${firstName} ${lastName}`.trim();
+
+                return {
+                  id: user._id.toString(),
+                  name:
+                    name || user.fullname || user.fullName || user.name || "",
+                  employeeId: user.employeeId || "",
+                };
+              });
+            }
+          }
+
           orgObj.team = {
             id: orgObj.team._id.toString(),
             name: orgObj.team.name || "",
@@ -126,6 +154,7 @@ const getAllOrganization = async (req, res) => {
             folderTitle: orgObj.team.folderTitle || "",
             objectives: orgObj.team.objectives || [],
             updatedAt: orgObj.team.updatedAt || "",
+            leadersData,
           };
         }
 
@@ -220,6 +249,33 @@ const getOrganization = async (req, res) => {
     if (orgObj.team) {
       const team = await Team.findById(orgObj.team);
       if (team) {
+        let leadersData = [];
+
+        if (Array.isArray(team.leaders) && team.leaders.length > 0) {
+          const leaderIds = team.leaders.filter((id) =>
+            mongoose.Types.ObjectId.isValid(id),
+          );
+
+          if (leaderIds.length > 0) {
+            const leaders = await User.find({
+              _id: { $in: leaderIds },
+              deletedAt: null,
+            }).select("firstName lastName fullname fullName name employeeId");
+
+            leadersData = leaders.map((user) => {
+              const firstName = user.firstName || "";
+              const lastName = user.lastName || "";
+              const name = `${firstName} ${lastName}`.trim();
+
+              return {
+                id: user._id.toString(),
+                employeeId: user.employeeId || "",
+                name: name || user.fullname || user.fullName || user.name || "",
+              };
+            });
+          }
+        }
+
         orgObj.team = {
           id: team._id.toString(),
           name: team.name || "",
@@ -228,6 +284,7 @@ const getOrganization = async (req, res) => {
           folderTitle: team.folderTitle || "",
           objectives: team.objectives || [],
           updatedAt: team.updatedAt || "",
+          leadersData,
         };
       }
     }

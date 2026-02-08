@@ -231,15 +231,47 @@ const getAllUsers = async (req, res) => {
 
     const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
     const filter = { deletedAt: null };
+    const andFilters = [];
+
     if (keyword) {
       const re = new RegExp(keyword, "i");
-      filter.$or = [
-        { firstName: re },
-        { lastName: re },
-        { email: re },
-        { username: re },
-        { employeeId: re },
-      ];
+      andFilters.push({
+        $or: [
+          { firstName: re },
+          { lastName: re },
+          { email: re },
+          { username: re },
+          { employeeId: re },
+        ],
+      });
+    }
+
+    const internalAuditorRole = await Role.findOne({
+      title: "Internal Auditor",
+    })
+      .select("_id")
+      .lean();
+
+    if (!internalAuditorRole) {
+      return res
+        .status(404)
+        .json({ message: "Internal Auditor role not found." });
+    }
+
+    const internalAuditorRoleId = internalAuditorRole._id;
+    const internalAuditorRoleIdStr = internalAuditorRoleId.toString();
+
+    andFilters.push({
+      $or: [
+        { role: internalAuditorRoleId },
+        { role: internalAuditorRoleIdStr },
+        { role: { $elemMatch: { $eq: internalAuditorRoleId } } },
+        { role: { $elemMatch: { $eq: internalAuditorRoleIdStr } } },
+      ],
+    });
+
+    if (andFilters.length > 0) {
+      filter.$and = andFilters;
     }
 
     const total = await User.countDocuments(filter);
@@ -315,8 +347,37 @@ const getUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid user id." });
     }
 
-    const user = await User.findById(id).select("-password -__v").lean();
-    if (!user) return res.status(404).json({ message: "User not found." });
+    const internalAuditorRole = await Role.findOne({
+      title: "Internal Auditor",
+    })
+      .select("_id")
+      .lean();
+
+    if (!internalAuditorRole) {
+      return res
+        .status(404)
+        .json({ message: "Internal Auditor role not found." });
+    }
+
+    const internalAuditorRoleId = internalAuditorRole._id;
+    const internalAuditorRoleIdStr = internalAuditorRoleId.toString();
+
+    const user = await User.findOne({
+      _id: id,
+      $or: [
+        { role: internalAuditorRoleId },
+        { role: internalAuditorRoleIdStr },
+        { role: { $elemMatch: { $eq: internalAuditorRoleId } } },
+        { role: { $elemMatch: { $eq: internalAuditorRoleIdStr } } },
+      ],
+    })
+      .select("-password -__v")
+      .lean();
+
+    if (!user)
+      return res
+        .status(404)
+        .json({ message: "User not found or not Internal Auditor." });
 
     // Resolve role objects with id and title
     let roleObjects = [];

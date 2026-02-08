@@ -1,6 +1,45 @@
 import { Schedule } from "./schedule.model.js";
 import { Team } from "../../teams/team.model.js";
+import Standard from "./Standard/standard.model.js";
 import mongoose from "mongoose";
+
+const AUDIT_TYPE_CODES = {
+  internal: "INT",
+  external: "EXT",
+  compliance: "CMP",
+  financial: "FIN",
+  operational: "OPR",
+};
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const generateAuditCode = async (auditType) => {
+  const auditTypeValue = (auditType ?? "").toString().trim();
+  const auditTypeKey = auditTypeValue.toLowerCase();
+  const auditTypeCode = AUDIT_TYPE_CODES[auditTypeKey];
+
+  if (!auditTypeCode) {
+    return {
+      error:
+        "Invalid audit type. Use Internal, External, Compliance, Financial, or Operational.",
+    };
+  }
+
+  const year = new Date().getFullYear();
+  const yearStart = new Date(`${year}-01-01T00:00:00.000Z`);
+  const yearEnd = new Date(`${year + 1}-01-01T00:00:00.000Z`);
+  const auditTypeMatch = new RegExp(`^${escapeRegExp(auditTypeValue)}$`, "i");
+
+  const existingCount = await Schedule.countDocuments({
+    auditType: auditTypeMatch,
+    deletedAt: null,
+    createdAt: { $gte: yearStart, $lt: yearEnd },
+  });
+
+  const sequence = String(existingCount + 1).padStart(2, "0");
+
+  return { auditCode: `${auditTypeCode}-${year}-${sequence}` };
+};
 
 const postSchedule = async (req, res) => {
   try {
@@ -11,7 +50,10 @@ const postSchedule = async (req, res) => {
       auditType,
       standard,
       organizations,
+      previousAudit,
       status,
+      auditYear,
+      auditNumber,
     } = req.body;
 
     // Get userId from token
@@ -19,6 +61,12 @@ const postSchedule = async (req, res) => {
 
     if (!title || typeof title !== "string" || !title.trim()) {
       return res.status(400).json({ message: "Title is required." });
+    }
+
+    const { auditCode: generatedAuditCode, error: auditCodeError } =
+      await generateAuditCode(auditType);
+    if (auditCodeError) {
+      return res.status(400).json({ message: auditCodeError });
     }
 
     // Check if there's an ongoing audit (status = 0)
@@ -40,11 +88,14 @@ const postSchedule = async (req, res) => {
     const scheduleData = {
       title: title.trim(),
       description,
-      auditCode,
+      auditCode: generatedAuditCode,
       auditType,
       standard,
       organizations,
+      previousAudit,
       status,
+      auditYear,
+      auditNumber,
       owner: userId,
     };
 
@@ -77,7 +128,6 @@ const getAllSchedule = async (req, res) => {
         { description: re },
         { auditCode: re },
         { auditType: re },
-        { standard: re },
       ];
     }
 
@@ -155,6 +205,23 @@ const getSchedule = async (req, res) => {
 
     scheduleObj.organizationData = organizationData;
 
+    // Format standard data
+    let standardData = {
+      standard: "",
+      description: "",
+    };
+    if (scheduleObj.standard && scheduleObj.standard.id) {
+      const standardDoc = await Standard.findById(scheduleObj.standard.id);
+      if (standardDoc) {
+        standardData = {
+          standard: standardDoc.standard || "",
+          description: standardDoc.description || "",
+        };
+      }
+    }
+
+    scheduleObj.standardData = standardData;
+
     return res.status(200).json({
       success: true,
       message: "Schedule retrieved successfully",
@@ -187,7 +254,10 @@ const putSchedule = async (req, res) => {
       auditType,
       standard,
       organizations,
+      previousAudit,
       status,
+      auditYear,
+      auditNumber,
     } = req.body;
 
     if (title !== undefined) {
@@ -198,13 +268,33 @@ const putSchedule = async (req, res) => {
     }
 
     if (description !== undefined) schedule.description = description;
-    if (auditCode !== undefined) schedule.auditCode = auditCode;
-    if (auditType !== undefined) schedule.auditType = auditType;
-    if (standard !== undefined) schedule.standard = standard;
+    if (auditType !== undefined) {
+      schedule.auditType = auditType;
+
+      const { auditCode: updatedAuditCode, error: auditCodeError } =
+        await generateAuditCode(auditType);
+      if (auditCodeError) {
+        return res.status(400).json({ message: auditCodeError });
+      }
+
+      schedule.auditCode = updatedAuditCode;
+    } else if (auditCode !== undefined) {
+      schedule.auditCode = auditCode;
+    }
+    if (standard !== undefined) {
+      schedule.standard = standard;
+      schedule.markModified("standard");
+    }
     if (status !== undefined) schedule.status = status;
+    if (auditYear !== undefined) schedule.auditYear = auditYear;
+    if (auditNumber !== undefined) schedule.auditNumber = auditNumber;
     if (organizations !== undefined) {
       schedule.organizations = organizations;
       schedule.markModified("organizations");
+    }
+    if (previousAudit !== undefined) {
+      schedule.previousAudit = previousAudit;
+      schedule.markModified("previousAudit");
     }
 
     const saved = await schedule.save();
