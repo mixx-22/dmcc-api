@@ -351,37 +351,10 @@ const getUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid user id." });
     }
 
-    const internalAuditorRole = await Role.findOne({
-      title: "Internal Auditor",
-    })
-      .select("_id")
-      .lean();
+    // Retrieve any user (not restricted by role)
+    const user = await User.findById(id).select("-password -__v").lean();
 
-    if (!internalAuditorRole) {
-      return res
-        .status(404)
-        .json({ message: "Internal Auditor role not found." });
-    }
-
-    const internalAuditorRoleId = internalAuditorRole._id;
-    const internalAuditorRoleIdStr = internalAuditorRoleId.toString();
-
-    const user = await User.findOne({
-      _id: id,
-      $or: [
-        { role: internalAuditorRoleId },
-        { role: internalAuditorRoleIdStr },
-        { role: { $elemMatch: { $eq: internalAuditorRoleId } } },
-        { role: { $elemMatch: { $eq: internalAuditorRoleIdStr } } },
-      ],
-    })
-      .select("-password -__v")
-      .lean();
-
-    if (!user)
-      return res
-        .status(404)
-        .json({ message: "User not found or not Internal Auditor." });
+    if (!user) return res.status(404).json({ message: "User not found." });
 
     // Resolve role objects with id and title
     let roleObjects = [];

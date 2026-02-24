@@ -270,6 +270,11 @@ export const getLatestAuditKpis = async (req, res) => {
         : 0;
 
     // Aggregate findings from all schedules
+    console.log(
+      `[KPI Dashboard] Starting findings aggregation with scheduleIds:`,
+      allScheduleIds.map((id) => id.toString()),
+    );
+
     const findingsAggregation = await Org.aggregate([
       {
         $match: {
@@ -335,6 +340,25 @@ export const getLatestAuditKpis = async (req, res) => {
       { $limit: 1 },
     ]);
 
+    console.log(`[KPI Dashboard] Findings aggregation returned:`, {
+      resultCount: findingsAggregation.length,
+      fullResult:
+        findingsAggregation.length > 0
+          ? JSON.stringify(
+              {
+                totalFindings: findingsAggregation[0].totalFindings,
+                majorNC: findingsAggregation[0].majorNC,
+                minorNC: findingsAggregation[0].minorNC,
+                observations: findingsAggregation[0].observations,
+                closedFindings: findingsAggregation[0].closedFindings,
+                findingsCount: findingsAggregation[0].allFindings?.length || 0,
+              },
+              null,
+              2,
+            )
+          : "No results",
+    });
+
     let totalFindings = 0;
     let majorNC = 0;
     let minorNC = 0;
@@ -350,6 +374,28 @@ export const getLatestAuditKpis = async (req, res) => {
       observations = result.observations || 0;
       closedFindings = result.closedFindings || 0;
       allFindings = result.allFindings || [];
+
+      console.log(`[KPI Dashboard] Aggregation result:`, {
+        totalFindings,
+        majorNC,
+        minorNC,
+        observations,
+        closedFindings,
+        findingsCount: allFindings.length,
+      });
+
+      if (allFindings.length > 0) {
+        console.log(
+          `[KPI Dashboard] First finding:`,
+          JSON.stringify(allFindings[0], null, 2),
+        );
+        console.log(
+          `[KPI Dashboard] First 3 findings:`,
+          JSON.stringify(allFindings.slice(0, 3), null, 2),
+        );
+      } else {
+        console.log(`[KPI Dashboard] No findings in aggregation result`);
+      }
     }
 
     const totalNC = majorNC + minorNC;
@@ -361,41 +407,29 @@ export const getLatestAuditKpis = async (req, res) => {
         ? ((closedFindings / totalFindings) * 100).toFixed(2)
         : 0;
 
-    // Findings per clause
+    // Findings per clause (objective)
     const clauseMap = {};
     const findingsLimit = Math.min(allFindings.length, 10000);
 
+    console.log(
+      `[KPI Dashboard] Processing ${findingsLimit} findings for clause grouping`,
+    );
+
     for (let i = 0; i < findingsLimit; i++) {
       const finding = allFindings[i];
-      if (finding.objectives && Array.isArray(finding.objectives)) {
-        finding.objectives.forEach((objective) => {
-          const clauseId = objective._id || objective;
-          if (clauseId) {
-            clauseMap[clauseId] = (clauseMap[clauseId] || 0) + 1;
-          }
-        });
+      if (finding.objective) {
+        const objectiveName = finding.objective;
+        clauseMap[objectiveName] = (clauseMap[objectiveName] || 0) + 1;
       }
     }
 
-    // Get all teams to fetch objective descriptions
-    const { Team } = await import("../../teams/team.model.js");
-    const teams = await Team.find({});
-    const objectivesMap = {};
-    teams.forEach((team) => {
-      if (team.objectives && Array.isArray(team.objectives)) {
-        team.objectives.forEach((obj) => {
-          if (obj._id) {
-            objectivesMap[obj._id.toString()] =
-              obj.description || obj.title || obj._id.toString();
-          }
-        });
-      }
-    });
+    console.log(`[KPI Dashboard] Clause map:`, clauseMap);
 
+    // Build findings per clause/objective
     const findingsPerClause = Object.entries(clauseMap)
-      .map(([clause, count]) => ({
-        clause,
-        description: objectivesMap[clause] || clause,
+      .map(([objective, count]) => ({
+        clause: objective,
+        description: objective,
         count,
       }))
       .sort((a, b) => b.count - a.count)
