@@ -246,29 +246,33 @@ const getAllUsers = async (req, res) => {
       });
     }
 
-    const internalAuditorRole = await Role.findOne({
-      title: "Internal Auditor",
-    })
-      .select("_id")
-      .lean();
+    const roleFilter = (req.query.role ?? req.query.roleTitle ?? "")
+      .toString()
+      .trim();
 
-    if (!internalAuditorRole) {
-      return res
-        .status(404)
-        .json({ message: "Internal Auditor role not found." });
+    if (roleFilter) {
+      const roleDoc = await Role.findOne({
+        title: new RegExp(roleFilter, "i"),
+      })
+        .select("_id")
+        .lean();
+
+      if (!roleDoc) {
+        return res.status(404).json({ message: "Role not found." });
+      }
+
+      const roleId = roleDoc._id;
+      const roleIdStr = roleId.toString();
+
+      andFilters.push({
+        $or: [
+          { role: roleId },
+          { role: roleIdStr },
+          { role: { $elemMatch: { $eq: roleId } } },
+          { role: { $elemMatch: { $eq: roleIdStr } } },
+        ],
+      });
     }
-
-    const internalAuditorRoleId = internalAuditorRole._id;
-    const internalAuditorRoleIdStr = internalAuditorRoleId.toString();
-
-    andFilters.push({
-      $or: [
-        { role: internalAuditorRoleId },
-        { role: internalAuditorRoleIdStr },
-        { role: { $elemMatch: { $eq: internalAuditorRoleId } } },
-        { role: { $elemMatch: { $eq: internalAuditorRoleIdStr } } },
-      ],
-    });
 
     if (andFilters.length > 0) {
       filter.$and = andFilters;
