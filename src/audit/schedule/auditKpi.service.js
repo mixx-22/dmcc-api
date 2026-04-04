@@ -38,8 +38,7 @@ export const calculateAuditKpis = async (auditScheduleId) => {
     // Formula: (Completed audits / Total audits) * 100
     const totalOrganizations = organizations.length;
     const completedOrganizations = organizations.filter(
-      (org) =>
-        org.status === "completed" || org.status === 2 || org.status === 3,
+      (org) => org.verdict && org.verdict !== "",
     ).length;
     const auditCompletionRate =
       totalOrganizations > 0
@@ -138,7 +137,20 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       {
         $group: {
           _id: null,
-          totalFindings: { $sum: 1 },
+          totalFindings: {
+            $sum: {
+              $cond: [
+                {
+                  $in: [
+                    "$visits.findings.compliance",
+                    ["MAJOR_NC", "MINOR_NC"],
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
           majorNC: {
             $sum: {
               $cond: [
@@ -168,7 +180,21 @@ export const calculateAuditKpis = async (auditScheduleId) => {
           },
           closedFindings: {
             $sum: {
-              $cond: [{ $eq: ["$visits.findings.corrected", 1] }, 1, 0],
+              $cond: [
+                {
+                  $and: [
+                    {
+                      $in: [
+                        "$visits.findings.compliance",
+                        ["MAJOR_NC", "MINOR_NC"],
+                      ],
+                    },
+                    { $eq: ["$visits.findings.corrected", 2] },
+                  ],
+                },
+                1,
+                0,
+              ],
             },
           },
           allFindings: { $push: "$visits.findings" },
@@ -200,7 +226,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       allFindings = result.allFindings || [];
     }
 
-    // 1. Total Findings
+    // 1. Total Findings (NC only)
+    // Formula: Count of MAJOR_NC + MINOR_NC findings
     const totalFindingsCount = totalFindings;
 
     // 2. Non-Conformity Rate (%)
@@ -217,25 +244,25 @@ export const calculateAuditKpis = async (auditScheduleId) => {
     };
 
     // 4. Corrective Action Closure Rate (%)
-    // Formula: (Closed findings / Total findings) * 100
+    // Formula: (Closed NC findings / Total NC findings) * 100
     const correctiveActionClosureRate =
       totalFindings > 0
         ? ((closedFindings / totalFindings) * 100).toFixed(2)
         : 0;
 
     // 5. Findings per Clause (group by ISO clause)
-    // Extract and count objectives (clauses) - limit processing
+    // Extract and count clauses - limit processing
     console.log("[KPI] Processing findings per clause...");
     const clauseMap = {};
     const findingsLimit = Math.min(allFindings.length, 10000); // Limit to prevent memory issues
 
     for (let i = 0; i < findingsLimit; i++) {
       const finding = allFindings[i];
-      if (finding.objectives && Array.isArray(finding.objectives)) {
-        finding.objectives.forEach((objective) => {
-          const clauseId = objective._id || objective;
-          if (clauseId) {
-            clauseMap[clauseId] = (clauseMap[clauseId] || 0) + 1;
+      if (finding.clauses && Array.isArray(finding.clauses)) {
+        finding.clauses.forEach((clause) => {
+          const clauseName = clause.name || clause.id;
+          if (clauseName) {
+            clauseMap[clauseName] = (clauseMap[clauseName] || 0) + 1;
           }
         });
       }
@@ -248,6 +275,10 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       if (team.objectives && Array.isArray(team.objectives)) {
         team.objectives.forEach((obj) => {
           if (obj._id) {
+            // Map both _id and title/name to description
+            const key = obj.title || obj.description || obj._id.toString();
+            objectivesMap[key] =
+              obj.description || obj.title || obj._id.toString();
             objectivesMap[obj._id.toString()] =
               obj.description || obj.title || obj._id.toString();
           }
@@ -425,7 +456,7 @@ export const calculateAuditKpis = async (auditScheduleId) => {
 
     // 7. Team Contribution to Overall NC Percentage
     // CRITICAL: Shows each team's contribution to the overall NC percentage
-    // Formula: (Team NC / Total Findings GLOBAL) × 100
+    // Formula: (Team NC / Total NC GLOBAL) × 100
     // Sum of all team contributions = Overall NC Percentage
     console.log("[KPI] Calculating Team NC Contribution to Overall NC...");
 
@@ -464,7 +495,20 @@ export const calculateAuditKpis = async (auditScheduleId) => {
             {
               $group: {
                 _id: null,
-                totalFindingsGlobal: { $sum: 1 },
+                totalFindingsGlobal: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $in: [
+                          "$visits.findings.compliance",
+                          ["MAJOR_NC", "MINOR_NC"],
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
                 totalNCGlobal: {
                   $sum: {
                     $cond: [
@@ -526,7 +570,7 @@ export const calculateAuditKpis = async (auditScheduleId) => {
           _id: 0,
           team: "$teamMetrics._id",
           teamNC: "$teamMetrics.teamNC",
-          // Team Contribution % = (Team NC / Total Findings GLOBAL) × 100
+          // Team Contribution % = (Team NC / Total NC GLOBAL) × 100
           contributionPercentage: {
             $cond: [
               { $gt: ["$globalTotals.totalFindingsGlobal", 0] },
@@ -639,7 +683,7 @@ export const calculateSystemWideKpis = async () => {
     // Overall completion rate
     const totalOrgs = allOrganizations.length;
     const completedOrgs = allOrganizations.filter(
-      (org) => org.status === "completed" || org.status === 2,
+      (org) => org.verdict && org.verdict !== "",
     ).length;
     const systemCompletionRate =
       totalOrgs > 0 ? ((completedOrgs / totalOrgs) * 100).toFixed(2) : 0;
@@ -656,7 +700,9 @@ export const calculateSystemWideKpis = async () => {
       }
     });
 
-    const totalSystemFindings = allFindings.length;
+    const totalSystemFindings = allFindings.filter(
+      (f) => f.compliance === "MAJOR_NC" || f.compliance === "MINOR_NC",
+    ).length;
     const majorNCSystem = allFindings.filter(
       (f) => f.compliance === "MAJOR_NC",
     ).length;
@@ -664,7 +710,9 @@ export const calculateSystemWideKpis = async () => {
       (f) => f.compliance === "MINOR_NC",
     ).length;
     const closedFindingsSystem = allFindings.filter(
-      (f) => f.corrected === 1,
+      (f) =>
+        (f.compliance === "MAJOR_NC" || f.compliance === "MINOR_NC") &&
+        f.corrected === 2,
     ).length;
 
     return {
