@@ -137,20 +137,7 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       {
         $group: {
           _id: null,
-          totalFindings: {
-            $sum: {
-              $cond: [
-                {
-                  $in: [
-                    "$visits.findings.compliance",
-                    ["MAJOR_NC", "MINOR_NC"],
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
+          totalFindings: { $sum: 1 },
           majorNC: {
             $sum: {
               $cond: [
@@ -226,8 +213,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       allFindings = result.allFindings || [];
     }
 
-    // 1. Total Findings (NC only)
-    // Formula: Count of MAJOR_NC + MINOR_NC findings
+    // 1. Total Findings (all findings)
+    // Formula: Count of all findings
     const totalFindingsCount = totalFindings;
 
     // 2. Non-Conformity Rate (%)
@@ -246,9 +233,7 @@ export const calculateAuditKpis = async (auditScheduleId) => {
     // 4. Corrective Action Closure Rate (%)
     // Formula: (Closed NC findings / Total NC findings) * 100
     const correctiveActionClosureRate =
-      totalFindings > 0
-        ? ((closedFindings / totalFindings) * 100).toFixed(2)
-        : 0;
+      totalNC > 0 ? ((closedFindings / totalNC) * 100).toFixed(2) : 0;
 
     // 5. Findings per Clause (group by ISO clause)
     // Extract and count clauses - limit processing
