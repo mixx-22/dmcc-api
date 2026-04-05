@@ -4,6 +4,7 @@ import { User } from "../users/user.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import { createTeamStat } from "./team-stat/teamstat.controller.js";
 import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
 
 // Helper function to extract user data for audit trail
 const extractUserData = (req) => {
@@ -136,19 +137,33 @@ const postTeam = async (req, res) => {
 
 const getAllTeams = async (req, res) => {
   try {
+    const showUserTeams = parseInt(req.query?.myTeams) === 1;
+    const isAdmin = req.user?.role?.some(
+      (role) => role === process.env.ADMIN_ID,
+    );
+
+    let filter = { deletedAt: null };
+
+    if (showUserTeams && !isAdmin) {
+      const token =
+        req.headers.authorization?.split(" ")[1] ?? req.cookies?.token;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = await User.findById(decoded.id);
+      const teamIds = req.user.team?.map((team) => team.id) || [];
+      filter = { _id: { $in: teamIds }, deletedAt: null };
+    }
+
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+    if (keyword) {
+      const re = new RegExp(keyword, "i");
+      filter.$or = [{ name: re }, { description: re }];
+    }
+
     // pagination
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const maxLimit = 100;
     let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
     if (limit > maxLimit) limit = maxLimit;
-
-    // keyword search (name OR description)
-    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
-    const filter = { deletedAt: null };
-    if (keyword) {
-      const re = new RegExp(keyword, "i");
-      filter.$or = [{ name: re }, { description: re }];
-    }
 
     const total = await Team.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
