@@ -22,7 +22,7 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || defaultOrigins.join(","))
 
 const corsOptions = {
   origin: (origin, cb) => {
-    console.log("CORS check origin:", origin, "allowed:", allowedOrigins);
+    // console.log("CORS check origin:", origin, "allowed:", allowedOrigins);
     // allow non-browser tools (no origin)
     if (!origin) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);

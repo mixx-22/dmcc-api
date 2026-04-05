@@ -885,7 +885,6 @@ const deleteUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
-    console.log("loginUser body:", req.body);
     const { usernameOrEmail, username, email, password } = req.body ?? {};
 
     const identifier = usernameOrEmail ?? username ?? email;
