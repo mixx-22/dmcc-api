@@ -2,6 +2,12 @@ import { Schedule } from "./schedule.model.js";
 import { Team } from "../../teams/team.model.js";
 import Standard from "./Standard/standard.model.js";
 import mongoose from "mongoose";
+import {
+  notifyScheduleCreated,
+  notifyScheduleUpdated,
+  notifyScheduleClosed,
+  notifyScheduleDeleted,
+} from "../../notifications/notification.service.js";
 
 const AUDIT_TYPE_CODES = {
   internal: "INT",
@@ -100,6 +106,12 @@ const postSchedule = async (req, res) => {
     };
 
     const newSchedule = await Schedule.create(scheduleData);
+
+    // Notify admins about the new schedule
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    notifyScheduleCreated(newSchedule, userId, actorName);
 
     res.status(201).json({
       message: "Schedule created successfully.",
@@ -247,6 +259,8 @@ const putSchedule = async (req, res) => {
       return res.status(404).json({ message: "Schedule not found." });
     }
 
+    const oldStatus = schedule.status;
+
     const {
       title,
       description,
@@ -299,6 +313,17 @@ const putSchedule = async (req, res) => {
 
     const saved = await schedule.save();
 
+    // Fire notifications
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    if (status !== undefined && status === 1 && oldStatus !== 1) {
+      notifyScheduleClosed(saved, actorId, actorName);
+    } else {
+      notifyScheduleUpdated(saved, actorId, actorName);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Schedule updated successfully.",
@@ -323,6 +348,13 @@ const deleteSchedule = async (req, res) => {
 
     schedule.deletedAt = new Date();
     await schedule.save();
+
+    // Notify admins about deletion
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    notifyScheduleDeleted(schedule, actorId, actorName);
 
     return res.status(200).json({
       success: true,

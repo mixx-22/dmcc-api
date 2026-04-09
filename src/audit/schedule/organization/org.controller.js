@@ -4,6 +4,18 @@ import { Team } from "../../../teams/team.model.js";
 import { User } from "../../../users/user.model.js";
 import { Document } from "../../../documents/document.model.js";
 import mongoose from "mongoose";
+import {
+  notifyOrganizationAdded,
+  notifyOrganizationDeleted,
+  notifyAuditorAssigned,
+  notifyAuditorRemoved,
+  notifyVerdictSet,
+  notifyFindingAdded,
+  notifyActionPlanSubmitted,
+  extractAuditorIds,
+  diffFindings,
+  detectActionPlanSubmissions,
+} from "../../../notifications/notification.service.js";
 
 const postOrganization = async (req, res) => {
   try {
@@ -56,6 +68,16 @@ const postOrganization = async (req, res) => {
       schedule.markModified("organizations");
       await schedule.save();
     }
+
+    // Notify admins + team leaders
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    const teamDoc = await Team.findById(team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const scheduleName = schedule?.title || "Audit Schedule";
+    notifyOrganizationAdded(newOrg, teamName, scheduleName, actorId, actorName);
 
     return res.status(201).json({
       success: true,
@@ -384,6 +406,11 @@ const putOrganization = async (req, res) => {
       return res.status(404).json({ message: "Organization not found." });
     }
 
+    // Snapshot old state for change detection
+    const oldAuditorIds = extractAuditorIds(org.auditors);
+    const oldVerdict = org.verdict || "";
+    const oldVisits = org.visits ? JSON.parse(JSON.stringify(org.visits)) : [];
+
     const {
       auditScheduleId,
       team,
@@ -413,6 +440,78 @@ const putOrganization = async (req, res) => {
 
     const saved = await org.save();
 
+    // ── Notification triggers (fire-and-forget) ──
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+
+    // Resolve team & schedule names once (used by many notifications)
+    const teamDoc = await Team.findById(org.team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const schedule = await Schedule.findById(org.auditScheduleId)
+      .select("title")
+      .lean();
+    const scheduleName = schedule?.title || "Audit Schedule";
+
+    // 1. Auditor assignment / removal
+    if (auditors !== undefined) {
+      const newAuditorIds = extractAuditorIds(auditors);
+      const added = newAuditorIds.filter((id) => !oldAuditorIds.includes(id));
+      const removed = oldAuditorIds.filter((id) => !newAuditorIds.includes(id));
+
+      if (added.length > 0) {
+        notifyAuditorAssigned(
+          added,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+      if (removed.length > 0) {
+        notifyAuditorRemoved(
+          removed,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+    }
+
+    // 2. Verdict set
+    if (verdict !== undefined && verdict && verdict !== oldVerdict) {
+      notifyVerdictSet(saved, teamName, scheduleName, actorId, actorName);
+    }
+
+    // 3. New findings & NC findings
+    if (visits !== undefined) {
+      const addedFindings = diffFindings(oldVisits, visits);
+      if (addedFindings.length > 0) {
+        notifyFindingAdded(
+          saved,
+          teamName,
+          scheduleName,
+          addedFindings,
+          actorId,
+          actorName,
+        );
+      }
+
+      // 4. Action plan submissions (corrected 0 → 1)
+      const actionPlans = detectActionPlanSubmissions(oldVisits, visits);
+      if (actionPlans.length > 0) {
+        notifyActionPlanSubmitted(
+          saved,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Organization updated successfully.",
@@ -439,6 +538,13 @@ const deleteOrganization = async (req, res) => {
 
     org.deletedAt = new Date();
     await org.save();
+
+    // Notify admins about deletion
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    notifyOrganizationDeleted(org, actorId, actorName);
 
     return res.status(200).json({
       success: true,

@@ -72,6 +72,7 @@ import scheduleRoutes from "./audit/schedule/schedule.route.js";
 import organizationRoutes from "./audit/schedule/organization/org.route.js";
 import requestRoutes from "./requests/request.route.js";
 import standardRoutes from "./audit/schedule/Standard/standard.route.js";
+import notificationRoutes from "./notifications/notification.route.js";
 
 app.use("/auth", authRoutes);
 app.use("/users", userRouter);
@@ -87,5 +88,7 @@ app.use("/schedules", scheduleRoutes);
 app.use("/organizations", organizationRoutes);
 app.use("/request", requestRoutes);
 app.use("/standards", standardRoutes);
+app.use("/notifications", notificationRoutes);
 
+export { allowedOrigins };
 export default app;
