@@ -79,6 +79,21 @@ const postOrganization = async (req, res) => {
     const scheduleName = schedule?.title || "Audit Schedule";
     notifyOrganizationAdded(newOrg, teamName, scheduleName, actorId, actorName);
 
+    // Notify auditors if set during creation
+    if (auditors) {
+      const auditorIds = extractAuditorIds(auditors);
+      console.log("[Notif Debug] postOrg auditorIds:", auditorIds);
+      if (auditorIds.length > 0) {
+        notifyAuditorAssigned(
+          auditorIds,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+    }
+
     return res.status(201).json({
       success: true,
       message: "Organization created successfully.",
@@ -457,8 +472,29 @@ const putOrganization = async (req, res) => {
     // 1. Auditor assignment / removal
     if (auditors !== undefined) {
       const newAuditorIds = extractAuditorIds(auditors);
+
+      console.log(
+        "[Notif Debug] OLD org.auditors (raw from DB):",
+        JSON.stringify(org.auditors),
+      );
+      console.log(
+        "[Notif Debug] NEW req.body.auditors:",
+        JSON.stringify(auditors),
+      );
+      console.log("[Notif Debug] oldAuditorIds:", oldAuditorIds);
+      console.log("[Notif Debug] newAuditorIds:", newAuditorIds);
+
       const added = newAuditorIds.filter((id) => !oldAuditorIds.includes(id));
       const removed = oldAuditorIds.filter((id) => !newAuditorIds.includes(id));
+
+      console.log(
+        "[Notif Debug] added:",
+        added,
+        "removed:",
+        removed,
+        "actorId:",
+        actorId?.toString(),
+      );
 
       if (added.length > 0) {
         notifyAuditorAssigned(

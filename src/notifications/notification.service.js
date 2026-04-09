@@ -120,13 +120,30 @@ const toIdString = (a) => {
  */
 export const extractAuditorIds = (auditors) => {
   const ids = [];
-  if (!auditors) return ids;
+  if (!auditors) {
+    console.log("[extractAuditorIds] auditors is falsy:", auditors);
+    return ids;
+  }
 
+  console.log(
+    "[extractAuditorIds] typeof:",
+    typeof auditors,
+    "isArray:",
+    Array.isArray(auditors),
+  );
   const items = Array.isArray(auditors) ? auditors : Object.values(auditors);
+  console.log("[extractAuditorIds] items count:", items.length);
   for (const a of items) {
+    console.log(
+      "[extractAuditorIds] item:",
+      typeof a,
+      JSON.stringify(a)?.slice(0, 200),
+    );
     const id = toIdString(a);
+    console.log("[extractAuditorIds] -> resolved id:", id);
     if (id) ids.push(id);
   }
+  console.log("[extractAuditorIds] final ids:", ids);
   return ids;
 };
 
@@ -139,6 +156,9 @@ const createAndBroadcast = async (
   { type, title, message, data },
   excludeUserId,
 ) => {
+  console.log(
+    `[createAndBroadcast] type=${type} recipientIds=${JSON.stringify(recipientIds)} excludeUserId=${excludeUserId}`,
+  );
   let uniqueIds = [...new Set(recipientIds.filter(Boolean))];
 
   // Exclude the actor so they don't receive their own notification
@@ -147,6 +167,9 @@ const createAndBroadcast = async (
     uniqueIds = uniqueIds.filter((id) => id !== excludeStr);
   }
 
+  console.log(
+    `[createAndBroadcast] after exclude: ${JSON.stringify(uniqueIds)}`,
+  );
   if (uniqueIds.length === 0) return [];
 
   const docs = uniqueIds.map((recipientId) => ({
@@ -157,16 +180,31 @@ const createAndBroadcast = async (
     data: data || {},
   }));
 
-  const created = await Notification.insertMany(docs);
+  try {
+    const created = await Notification.insertMany(docs);
+    console.log(
+      `[createAndBroadcast] persisted ${created.length} notification(s) for type=${type}`,
+    );
 
-  // Broadcast through Socket.io
-  if (io) {
-    for (const notif of created) {
-      io.to(`user:${notif.recipient.toString()}`).emit("notification", notif);
+    // Broadcast through Socket.io
+    if (io) {
+      for (const notif of created) {
+        io.to(`user:${notif.recipient.toString()}`).emit("notification", notif);
+      }
+    } else {
+      console.log(
+        `[createAndBroadcast] io is null — WebSocket not broadcasting`,
+      );
     }
-  }
 
-  return created;
+    return created;
+  } catch (dbErr) {
+    console.error(
+      `[createAndBroadcast] DB insert failed for type=${type}:`,
+      dbErr.message,
+    );
+    return [];
+  }
 };
 
 // ──────────────────────────────────────────────────────────────
