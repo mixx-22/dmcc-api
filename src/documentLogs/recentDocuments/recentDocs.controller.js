@@ -1,5 +1,5 @@
 import { RecentDocs } from "./recentDocs.model.js";
-import Document from "../../documents/document.model.js";
+import { Document } from "../../documents/document.model.js";
 import { FileType } from "../../fileType/fileType.model.js";
 import mongoose from "mongoose";
 

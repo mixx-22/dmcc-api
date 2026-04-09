@@ -32,10 +32,6 @@ const documentSchema = new mongoose.Schema(
       ref: "Document",
       default: null,
     },
-    path: {
-      type: [String],
-      default: [],
-    },
     privacy: {
       users: [
         {
@@ -59,11 +55,11 @@ const documentSchema = new mongoose.Schema(
     permissionOverrides: {
       readOnly: {
         type: Number,
-        default: 0,
+        default: 1,
       },
       restricted: {
         type: Number,
-        default: 0,
+        default: 1,
       },
     },
     metadata: {
@@ -106,7 +102,5 @@ documentSchema.index({ status: 1 });
 documentSchema.index({ parentId: 1 });
 documentSchema.index({ owner: 1 });
 
-const Document =
+export const Document =
   mongoose.models.Document || mongoose.model("Document", documentSchema);
-
-export default Document;

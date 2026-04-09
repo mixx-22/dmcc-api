@@ -9,12 +9,6 @@ import {
   downloadFile,
   uploadFile,
   previewFile,
-  submitDocument,
-  rejectDocument,
-  discardDocument,
-  approveDocument,
-  publishDocument,
-  reviseDocument,
   getQualityDocument,
 } from "./document.controller.js";
 import { authenticate } from "../users/user.controller.js";
@@ -31,8 +25,8 @@ const upload = multer({
 router.post("/upload", authenticate, upload.single("file"), uploadFile);
 
 // POST /api/documents - Create a new document (no file upload)
-router.post("/", authenticate, postDocument);
-router.get("/", authenticate, getDocuments);
+router.post("", authenticate, postDocument);
+router.get("", authenticate, getDocuments);
 router.get("/quality", authenticate, getQualityDocument);
 router.get("/preview/:id", authenticate, previewFile);
 router.get("/:id", authenticate, getDocument);
@@ -42,19 +36,4 @@ router.put("/:id", authenticate, updateDocument);
 router.delete("/:id", authenticate, deleteDocument);
 router.post("/download", authenticate, downloadFile);
 
-// Document workflow routes
-router.post("/submit/:id", authenticate, submitDocument);
-router.post("/reject/:id", authenticate, rejectDocument);
-router.post("/discard/:id", authenticate, discardDocument);
-router.post("/approve/:id", authenticate, approveDocument);
-router.post("/publish/:id", authenticate, publishDocument);
-router.post("/revise/:id", authenticate, reviseDocument);
-
 export default router;
-
-// documents/submit/:id
-// documents/reject/:id
-// documents/discard/:id
-// documents/approve/:id
-// documents/publish/:id
-// documents/revise/:id
