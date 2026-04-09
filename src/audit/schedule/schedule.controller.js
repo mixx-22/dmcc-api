@@ -1,7 +1,15 @@
 import { Schedule } from "./schedule.model.js";
 import { Team } from "../../teams/team.model.js";
 import Standard from "./Standard/standard.model.js";
+import { Org } from "./organization/org.model.js";
 import mongoose from "mongoose";
+import {
+  notifyAdmins,
+  notifyAuditorsScheduleClosed,
+  notifyTeamLeadersScheduleClosed,
+  actorName,
+  NOTIFICATION_TYPES,
+} from "../../notifications/notification.service.js";
 
 const AUDIT_TYPE_CODES = {
   internal: "INT",
@@ -100,6 +108,15 @@ const postSchedule = async (req, res) => {
     };
 
     const newSchedule = await Schedule.create(scheduleData);
+
+    // Notify admins about new schedule (fire-and-forget)
+    notifyAdmins({
+      type: NOTIFICATION_TYPES.SCHEDULE_CREATED,
+      title: "Audit Schedule Created",
+      message: `A new audit schedule "${newSchedule.title}" (${newSchedule.auditCode}) has been created by ${actorName(req.user)}.`,
+      entity: { kind: "Schedule", id: newSchedule._id },
+      actor: { id: userId, name: actorName(req.user) },
+    }).catch((err) => console.error("[notify] SCHEDULE_CREATED error:", err.message));
 
     res.status(201).json({
       message: "Schedule created successfully.",
@@ -260,6 +277,8 @@ const putSchedule = async (req, res) => {
       auditNumber,
     } = req.body;
 
+    const previousStatus = schedule.status;
+
     if (title !== undefined) {
       if (!title || typeof title !== "string" || !title.trim()) {
         return res.status(400).json({ message: "Title is required." });
@@ -299,6 +318,68 @@ const putSchedule = async (req, res) => {
 
     const saved = await schedule.save();
 
+    // --- Notifications (fire-and-forget) ---
+    const userId = req.user?._id || req.user?.id;
+    const actorInfo = { id: userId, name: actorName(req.user) };
+    const entityInfo = { kind: "Schedule", id: saved._id };
+    const isClosing = status !== undefined && Number(status) === 1 && Number(previousStatus) !== 1;
+
+    if (isClosing) {
+      // Schedule closed – notify admins, auditors, and team leaders
+      notifyAdmins({
+        type: NOTIFICATION_TYPES.SCHEDULE_CLOSED,
+        title: "Audit Schedule Closed",
+        message: `The audit schedule "${saved.title}" has been closed by ${actorInfo.name}.`,
+        entity: entityInfo,
+        actor: actorInfo,
+      }).catch((err) => console.error("[notify] SCHEDULE_CLOSED admin error:", err.message));
+
+      // Gather auditor IDs and team IDs from organizations in this schedule
+      (async () => {
+        try {
+          const orgs = await Org.find({ auditScheduleId: saved._id, deletedAt: null }).lean();
+          const auditorIdSet = new Set();
+          const teamIdSet = new Set();
+          for (const org of orgs) {
+            if (org.team) teamIdSet.add(org.team.toString());
+            if (org.auditors) {
+              const ids = Array.isArray(org.auditors)
+                ? org.auditors.map((a) => (typeof a === "object" && a.id ? a.id : a))
+                : Object.values(org.auditors).map((a) => (typeof a === "object" && a.id ? a.id : a));
+              ids.forEach((id) => { if (id) auditorIdSet.add(id.toString()); });
+            }
+          }
+          if (auditorIdSet.size > 0) {
+            await notifyAuditorsScheduleClosed({
+              auditorIds: [...auditorIdSet],
+              scheduleTitle: saved.title,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+          }
+          if (teamIdSet.size > 0) {
+            await notifyTeamLeadersScheduleClosed({
+              teamIds: [...teamIdSet],
+              scheduleTitle: saved.title,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+          }
+        } catch (err) {
+          console.error("[notify] SCHEDULE_CLOSED auditor/team error:", err.message);
+        }
+      })();
+    } else {
+      // Generic schedule update notification for admins
+      notifyAdmins({
+        type: NOTIFICATION_TYPES.SCHEDULE_UPDATED,
+        title: "Audit Schedule Updated",
+        message: `The audit schedule "${saved.title}" has been updated by ${actorInfo.name}.`,
+        entity: entityInfo,
+        actor: actorInfo,
+      }).catch((err) => console.error("[notify] SCHEDULE_UPDATED error:", err.message));
+    }
+
     return res.status(200).json({
       success: true,
       message: "Schedule updated successfully.",
@@ -323,6 +404,16 @@ const deleteSchedule = async (req, res) => {
 
     schedule.deletedAt = new Date();
     await schedule.save();
+
+    // Notify admins about schedule deletion
+    const userId = req.user?._id || req.user?.id;
+    notifyAdmins({
+      type: NOTIFICATION_TYPES.SCHEDULE_DELETED,
+      title: "Audit Schedule Deleted",
+      message: `The audit schedule "${schedule.title}" has been deleted by ${actorName(req.user)}.`,
+      entity: { kind: "Schedule", id: schedule._id },
+      actor: { id: userId, name: actorName(req.user) },
+    }).catch((err) => console.error("[notify] SCHEDULE_DELETED error:", err.message));
 
     return res.status(200).json({
       success: true,
