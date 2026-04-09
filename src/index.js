@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
+import { createServer } from "http";
 import connectDB from "./config/database.js";
 import app from "./app.js";
+import { initWebSocket } from "./notifications/websocket.js";
 
 dotenv.config({
   path: "./.env",
@@ -15,13 +17,18 @@ const startServer = async () => {
   try {
     await connectDB();
 
-    app.on("error", (err) => {
+    const server = createServer(app);
+
+    // Attach WebSocket server to the same HTTP server
+    initWebSocket(server);
+
+    server.on("error", (err) => {
       console.log("Server error:", err);
       throw err;
     });
 
     const PORT = process.env.PORT || 8000;
-    app.listen(PORT, "0.0.0.0", () => {
+    server.listen(PORT, "0.0.0.0", () => {
       console.log(`Server is running on 0.0.0.0:${PORT} (accessible from network)`);
     });
   } catch (error) {

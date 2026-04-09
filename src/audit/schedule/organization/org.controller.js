@@ -4,6 +4,33 @@ import { Team } from "../../../teams/team.model.js";
 import { User } from "../../../users/user.model.js";
 import { Document } from "../../../documents/document.model.js";
 import mongoose from "mongoose";
+import {
+  notifyAdmins,
+  notifyQmrVerdictSet,
+  notifyAuditorsAssigned,
+  notifyAuditorsRemoved,
+  notifyAuditorsActionPlan,
+  notifyTeamLeadersOrgAdded,
+  notifyTeamLeadersNCFinding,
+  actorName,
+  NOTIFICATION_TYPES,
+} from "../../../notifications/notification.service.js";
+
+/**
+ * Extract a flat array of auditor ID strings from the Mixed auditors field.
+ */
+const extractAuditorIds = (auditors) => {
+  if (!auditors) return [];
+  let raw = [];
+  if (Array.isArray(auditors)) {
+    raw = auditors.map((a) => (typeof a === "object" && a.id ? a.id : a));
+  } else if (typeof auditors === "object") {
+    raw = Object.values(auditors).map((a) =>
+      typeof a === "object" && a.id ? a.id : a,
+    );
+  }
+  return raw.filter((id) => id && mongoose.Types.ObjectId.isValid(id)).map(String);
+};
 
 const postOrganization = async (req, res) => {
   try {
@@ -56,6 +83,34 @@ const postOrganization = async (req, res) => {
       schedule.markModified("organizations");
       await schedule.save();
     }
+
+    // --- Notifications (fire-and-forget) ---
+    const userId = req.user?._id || req.user?.id;
+    const actorInfo = { id: userId, name: actorName(req.user) };
+    const entityInfo = { kind: "Organization", id: newOrg._id };
+
+    // Resolve team name for notification messages
+    const teamDoc = await Team.findById(team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const scheduleTitle = schedule?.title || "Audit Schedule";
+
+    // Notify admins
+    notifyAdmins({
+      type: NOTIFICATION_TYPES.ORGANIZATION_ADDED,
+      title: "Organization Added",
+      message: `Team "${teamName}" has been added as an organization in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+      entity: entityInfo,
+      actor: actorInfo,
+    }).catch((err) => console.error("[notify] ORGANIZATION_ADDED admin error:", err.message));
+
+    // Notify team leaders of the team
+    notifyTeamLeadersOrgAdded({
+      teamId: team,
+      scheduleTitle,
+      orgTeamName: teamName,
+      entity: entityInfo,
+      actor: actorInfo,
+    }).catch((err) => console.error("[notify] TEAM_ADDED_AS_ORG error:", err.message));
 
     return res.status(201).json({
       success: true,
@@ -384,6 +439,11 @@ const putOrganization = async (req, res) => {
       return res.status(404).json({ message: "Organization not found." });
     }
 
+    // Capture previous state for diff-based notifications
+    const prevAuditorIds = extractAuditorIds(org.auditors);
+    const prevVisitCount = Array.isArray(org.visits) ? org.visits.length : 0;
+    const prevVerdict = org.verdict || "";
+
     const {
       auditScheduleId,
       team,
@@ -413,6 +473,177 @@ const putOrganization = async (req, res) => {
 
     const saved = await org.save();
 
+    // --- Notifications (fire-and-forget) ---
+    (async () => {
+      try {
+        const userId = req.user?._id || req.user?.id;
+        const actorInfo = { id: userId, name: actorName(req.user) };
+        const entityInfo = { kind: "Organization", id: saved._id };
+
+        // Resolve context
+        const schedule = await Schedule.findById(saved.auditScheduleId).select("title").lean();
+        const teamDoc = await Team.findById(saved.team).select("name").lean();
+        const scheduleTitle = schedule?.title || "Audit Schedule";
+        const teamName = teamDoc?.name || "Unknown Team";
+
+        // 1. Auditor assignment / removal
+        if (auditors !== undefined) {
+          const newAuditorIds = extractAuditorIds(auditors);
+          const added = newAuditorIds.filter((id) => !prevAuditorIds.includes(id));
+          const removed = prevAuditorIds.filter((id) => !newAuditorIds.includes(id));
+
+          if (added.length > 0) {
+            await notifyAuditorsAssigned({
+              auditorIds: added,
+              scheduleTitle,
+              orgTeamName: teamName,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+            await notifyAdmins({
+              type: NOTIFICATION_TYPES.AUDITOR_ASSIGNED,
+              title: "Auditor Assigned",
+              message: `Auditor(s) assigned to "${teamName}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+          }
+          if (removed.length > 0) {
+            await notifyAuditorsRemoved({
+              auditorIds: removed,
+              scheduleTitle,
+              orgTeamName: teamName,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+            await notifyAdmins({
+              type: NOTIFICATION_TYPES.AUDITOR_REMOVED,
+              title: "Auditor Removed",
+              message: `Auditor(s) removed from "${teamName}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+          }
+        }
+
+        // 2. Verdict set → notify QMRs and admins
+        if (verdict !== undefined && verdict && verdict !== prevVerdict) {
+          await notifyQmrVerdictSet({
+            scheduleTitle,
+            orgTeamName: teamName,
+            verdict,
+            entity: entityInfo,
+            actor: actorInfo,
+          });
+          await notifyAdmins({
+            type: NOTIFICATION_TYPES.VERDICT_SET,
+            title: "Verdict Set",
+            message: `The verdict for "${teamName}" has been set to "${verdict}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+            entity: entityInfo,
+            actor: actorInfo,
+          });
+        }
+
+        // 3. Visit / finding changes
+        if (visits !== undefined && Array.isArray(visits)) {
+          const newVisitCount = visits.length;
+
+          // Check new / updated visits for NC findings and action plans
+          for (let i = 0; i < visits.length; i++) {
+            const visit = visits[i];
+            if (!visit) continue;
+
+            const findings = visit.findings || visit.checklist || [];
+            if (!Array.isArray(findings)) continue;
+
+            for (const finding of findings) {
+              if (!finding) continue;
+
+              // Detect NC findings (Minor/Major Non-Conformity)
+              const findingType = (finding.type || finding.findingType || "").toString();
+              const isNC =
+                /major/i.test(findingType) || /minor/i.test(findingType);
+
+              if (isNC) {
+                const ncType = /major/i.test(findingType) ? "Major" : "Minor";
+                await notifyTeamLeadersNCFinding({
+                  teamId: saved.team,
+                  scheduleTitle,
+                  orgTeamName: teamName,
+                  findingType: ncType,
+                  entity: entityInfo,
+                  actor: actorInfo,
+                });
+                await notifyAdmins({
+                  type: NOTIFICATION_TYPES.FINDING_ADDED,
+                  title: `${ncType} NC Finding Added`,
+                  message: `A ${ncType} Non-Conformity finding was added for "${teamName}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+                  entity: entityInfo,
+                  actor: actorInfo,
+                });
+                // Only notify once per update to avoid spam
+                break;
+              }
+
+              // Detect action plan submission
+              const hasActionPlan =
+                finding.actionPlan ||
+                finding.correctiveAction ||
+                finding.action_plan;
+              if (hasActionPlan) {
+                const currentAuditorIds = extractAuditorIds(saved.auditors);
+                if (currentAuditorIds.length > 0) {
+                  await notifyAuditorsActionPlan({
+                    auditorIds: currentAuditorIds,
+                    scheduleTitle,
+                    orgTeamName: teamName,
+                    entity: entityInfo,
+                    actor: actorInfo,
+                  });
+                  await notifyAdmins({
+                    type: NOTIFICATION_TYPES.ACTION_PLAN_SUBMITTED,
+                    title: "Action Plan Submitted",
+                    message: `An action plan has been submitted for "${teamName}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+                    entity: entityInfo,
+                    actor: actorInfo,
+                  });
+                }
+                break;
+              }
+            }
+          }
+
+          // Generic visit notification for admins if visits were added
+          if (newVisitCount > prevVisitCount) {
+            await notifyAdmins({
+              type: NOTIFICATION_TYPES.VISIT_ADDED,
+              title: "Visit Added",
+              message: `A new visit has been added for "${teamName}" in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+              entity: entityInfo,
+              actor: actorInfo,
+            });
+          }
+        }
+
+        // 4. Generic org update for admins (if nothing specific above triggered)
+        if (
+          auditors === undefined &&
+          verdict === undefined &&
+          visits === undefined
+        ) {
+          await notifyAdmins({
+            type: NOTIFICATION_TYPES.ORGANIZATION_UPDATED,
+            title: "Organization Updated",
+            message: `Organization "${teamName}" has been updated in schedule "${scheduleTitle}" by ${actorInfo.name}.`,
+            entity: entityInfo,
+            actor: actorInfo,
+          });
+        }
+      } catch (err) {
+        console.error("[notify] putOrganization error:", err.message);
+      }
+    })();
+
     return res.status(200).json({
       success: true,
       message: "Organization updated successfully.",
@@ -439,6 +670,26 @@ const deleteOrganization = async (req, res) => {
 
     org.deletedAt = new Date();
     await org.save();
+
+    // Notify admins about org deletion
+    const userId = req.user?._id || req.user?.id;
+    (async () => {
+      try {
+        const teamDoc = await Team.findById(org.team).select("name").lean();
+        const schedule = await Schedule.findById(org.auditScheduleId).select("title").lean();
+        const teamName = teamDoc?.name || "Unknown Team";
+        const scheduleTitle = schedule?.title || "Audit Schedule";
+        await notifyAdmins({
+          type: NOTIFICATION_TYPES.ORGANIZATION_DELETED,
+          title: "Organization Removed",
+          message: `Organization "${teamName}" has been removed from schedule "${scheduleTitle}" by ${actorName(req.user)}.`,
+          entity: { kind: "Organization", id: org._id },
+          actor: { id: userId, name: actorName(req.user) },
+        });
+      } catch (err) {
+        console.error("[notify] ORGANIZATION_DELETED error:", err.message);
+      }
+    })();
 
     return res.status(200).json({
       success: true,
