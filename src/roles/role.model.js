@@ -37,6 +37,8 @@ const defaultPermissions = {
   },
 };
 
+const ROLE_TYPES = ["admin", "qmr", "auditor", "teamLeader"];
+
 const roleSchema = new Schema(
   {
     title: { type: String, required: true, unique: true, trim: true },
@@ -49,10 +51,22 @@ const roleSchema = new Schema(
     },
 
     isSystemRole: { type: Boolean, default: false },
+
+    // Functional type tags used to identify the role's purpose for notifications
+    // and other system features.  A role can carry zero or more of these tags.
+    roleTypes: {
+      type: [
+        {
+          type: String,
+          enum: ROLE_TYPES,
+        },
+      ],
+      default: [],
+    },
   },
 
   { timestamps: true },
 );
 
 export const Role = mongoose.model("Role", roleSchema);
-export { defaultPermissions };
+export { defaultPermissions, ROLE_TYPES };
