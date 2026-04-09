@@ -4,6 +4,18 @@ import { Team } from "../../../teams/team.model.js";
 import { User } from "../../../users/user.model.js";
 import { Document } from "../../../documents/document.model.js";
 import mongoose from "mongoose";
+import {
+  notifyOrganizationAdded,
+  notifyOrganizationDeleted,
+  notifyAuditorAssigned,
+  notifyAuditorRemoved,
+  notifyVerdictSet,
+  notifyFindingAdded,
+  notifyActionPlanSubmitted,
+  notifyFindingVerified,
+  extractAuditorIds,
+  diffVisitChanges,
+} from "../../../notifications/notification.service.js";
 
 const postOrganization = async (req, res) => {
   try {
@@ -55,6 +67,31 @@ const postOrganization = async (req, res) => {
       schedule.organizations[team.toString()] = newOrg._id.toString();
       schedule.markModified("organizations");
       await schedule.save();
+    }
+
+    // Notify admins + team leaders
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    const teamDoc = await Team.findById(team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const scheduleName = schedule?.title || "Audit Schedule";
+    notifyOrganizationAdded(newOrg, teamName, scheduleName, actorId, actorName);
+
+    // Notify auditors if set during creation
+    if (auditors) {
+      const auditorIds = extractAuditorIds(auditors);
+      console.log("[Notif Debug] postOrg auditorIds:", auditorIds);
+      if (auditorIds.length > 0) {
+        notifyAuditorAssigned(
+          auditorIds,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
     }
 
     return res.status(201).json({
@@ -384,6 +421,11 @@ const putOrganization = async (req, res) => {
       return res.status(404).json({ message: "Organization not found." });
     }
 
+    // Snapshot old state for change detection
+    const oldAuditorIds = extractAuditorIds(org.auditors);
+    const oldVerdict = org.verdict || "";
+    const oldVisits = org.visits ? JSON.parse(JSON.stringify(org.visits)) : [];
+
     const {
       auditScheduleId,
       team,
@@ -413,6 +455,112 @@ const putOrganization = async (req, res) => {
 
     const saved = await org.save();
 
+    // ── Notification triggers (fire-and-forget) ──
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+
+    // Resolve team & schedule names once (used by many notifications)
+    const teamDoc = await Team.findById(org.team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const schedule = await Schedule.findById(org.auditScheduleId)
+      .select("title")
+      .lean();
+    const scheduleName = schedule?.title || "Audit Schedule";
+
+    // 1. Auditor assignment / removal
+    if (auditors !== undefined) {
+      const newAuditorIds = extractAuditorIds(auditors);
+
+      console.log(
+        "[Notif Debug] OLD org.auditors (raw from DB):",
+        JSON.stringify(org.auditors),
+      );
+      console.log(
+        "[Notif Debug] NEW req.body.auditors:",
+        JSON.stringify(auditors),
+      );
+      console.log("[Notif Debug] oldAuditorIds:", oldAuditorIds);
+      console.log("[Notif Debug] newAuditorIds:", newAuditorIds);
+
+      const added = newAuditorIds.filter((id) => !oldAuditorIds.includes(id));
+      const removed = oldAuditorIds.filter((id) => !newAuditorIds.includes(id));
+
+      console.log(
+        "[Notif Debug] added:",
+        added,
+        "removed:",
+        removed,
+        "actorId:",
+        actorId?.toString(),
+      );
+
+      if (added.length > 0) {
+        notifyAuditorAssigned(
+          added,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+      if (removed.length > 0) {
+        notifyAuditorRemoved(
+          removed,
+          teamName,
+          scheduleName,
+          actorId,
+          actorName,
+        );
+      }
+    }
+
+    // 2. Verdict set
+    if (verdict !== undefined && verdict && verdict !== oldVerdict) {
+      notifyVerdictSet(saved, teamName, scheduleName, actorId, actorName);
+    }
+
+    // 3. Visit changes: new findings, action plans, verifications
+    if (visits !== undefined) {
+      const changes = diffVisitChanges(oldVisits, visits);
+
+      if (changes.newFindings.length > 0) {
+        notifyFindingAdded(
+          saved,
+          teamName,
+          scheduleName,
+          changes.newFindings,
+          actorId,
+          actorName,
+        );
+      }
+
+      // Action plan submitted (corrected 0 → 1) — notify auditors
+      if (changes.actionPlans.length > 0) {
+        notifyActionPlanSubmitted(
+          saved,
+          teamName,
+          scheduleName,
+          changes.actionPlans,
+          actorId,
+          actorName,
+        );
+      }
+
+      // Finding verified (corrected 1 → 2) — notify team leaders
+      if (changes.verifications.length > 0) {
+        notifyFindingVerified(
+          saved,
+          teamName,
+          scheduleName,
+          changes.verifications,
+          actorId,
+          actorName,
+        );
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: "Organization updated successfully.",
@@ -439,6 +587,13 @@ const deleteOrganization = async (req, res) => {
 
     org.deletedAt = new Date();
     await org.save();
+
+    // Notify admins about deletion
+    const actorId = req.user?._id || req.user?.id;
+    const actorName =
+      `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
+      "System";
+    notifyOrganizationDeleted(org, actorId, actorName);
 
     return res.status(200).json({
       success: true,
