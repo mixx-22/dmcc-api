@@ -24,23 +24,44 @@ Backend action (e.g. schedule created)
 
 ## Notification Types & Recipients
 
-| Type                    | Title                           | Recipients                                                                                      |
-| ----------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `SCHEDULE_CREATED`      | Audit Schedule Created          | All **Admin** role-type users                                                                   |
-| `SCHEDULE_UPDATED`      | Audit Schedule Updated          | All **Admin** role-type users                                                                   |
-| `SCHEDULE_CLOSED`       | Audit Schedule Closed           | **Admin** + **Auditors** assigned in that schedule + **Team Leaders** of teams in that schedule |
-| `SCHEDULE_DELETED`      | Audit Schedule Deleted          | All **Admin** role-type users                                                                   |
-| `ORGANIZATION_ADDED`    | Organization Added to Audit     | All **Admin** role-type users                                                                   |
-| `ORGANIZATION_DELETED`  | Organization Removed from Audit | All **Admin** role-type users                                                                   |
-| `TEAM_ADDED_AS_ORG`     | Your Team Added to Audit        | **Team Leaders** of the team that was added                                                     |
-| `FINDING_ADDED`         | Finding Added                   | All **Admin** role-type users                                                                   |
-| `FINDING_NC_ADDED`      | Non-Conformity Finding Added    | **Team Leaders** of the affected team                                                           |
-| `VERDICT_SET`           | Final Verdict Set               | All **QMR** role-type users                                                                     |
-| `AUDITOR_ASSIGNED`      | Assigned as Auditor             | The specific user(s) being assigned                                                             |
-| `AUDITOR_REMOVED`       | Removed as Auditor              | The specific user(s) being removed                                                              |
-| `ACTION_PLAN_SUBMITTED` | Action Plan Submitted           | **Auditors** assigned to that organization                                                      |
+| Type                    | Title                           | Recipients                                                                                                    |
+| ----------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `SCHEDULE_CREATED`      | Audit Schedule Created          | All **Admin** role-type users                                                                                 |
+| `SCHEDULE_UPDATED`      | Audit Schedule Updated          | All **Admin** role-type users                                                                                 |
+| `SCHEDULE_CLOSED`       | Audit Schedule Closed           | **Admin** + **Auditors** assigned in that schedule + **Team Leaders** of teams in that schedule               |
+| `SCHEDULE_DELETED`      | Audit Schedule Deleted          | All **Admin** role-type users                                                                                 |
+| `ORGANIZATION_ADDED`    | Organization Added to Audit     | All **Admin** role-type users                                                                                 |
+| `ORGANIZATION_DELETED`  | Organization Removed from Audit | All **Admin** role-type users                                                                                 |
+| `TEAM_ADDED_AS_ORG`     | Your Team Added to Audit        | **Team Leaders** of the team that was added                                                                   |
+| `FINDING_ADDED`         | Finding Added                   | All **Admin** role-type users + **Team Leaders** (only for Minor/Major NC)                                    |
+| `FINDING_NC_ADDED`      | Non-Conformity Finding Added    | **Team Leaders** of the affected team                                                                         |
+| `VERDICT_SET`           | Final Verdict Set               | All **QMR** role-type users                                                                                   |
+| `AUDITOR_ASSIGNED`      | Assigned as Auditor             | The specific **Auditor** user(s) being assigned                                                               |
+| `AUDITOR_REMOVED`       | Removed as Auditor              | The specific **Auditor** user(s) being removed                                                                |
+| `ACTION_PLAN_SUBMITTED` | Action Plan Submitted           | **Auditors** assigned to that organization (triggered when Team Leader submits action plan — `corrected` 0→1) |
+| `FINDING_VERIFIED`      | Action Plan Verified            | **Team Leaders** of the affected team (triggered when Auditor verifies — `corrected` 1→2)                     |
 
 > **Note:** The user who performed the action is always **excluded** from their own notification.
+
+### How visit / finding changes are detected
+
+The backend compares old and new `visits` arrays **by position** (visit index × finding index). This avoids false positives from field-level changes being misidentified as "new findings".
+
+| Change detected at existing index | `corrected` transition | Notification fired                           | Recipients                     |
+| --------------------------------- | ---------------------- | -------------------------------------------- | ------------------------------ |
+| Finding appended (new index)      | —                      | `FINDING_ADDED` (+ `FINDING_NC_ADDED` if NC) | Admins (+ Team Leaders for NC) |
+| Action plan added                 | `0 → 1`                | `ACTION_PLAN_SUBMITTED`                      | Auditors of the org            |
+| Finding verified                  | `1 → 2`                | `FINDING_VERIFIED`                           | Team Leaders of the team       |
+
+#### `corrected` field state machine
+
+```
+0  — No action plan yet (default)
+1  — Action plan submitted by Team Leader (pending auditor verification)
+2  — Verified / closed by Auditor
+```
+
+Only findings with `compliance` = `"MAJOR_NC"` or `"MINOR_NC"` are tracked for action plan and verification transitions.
 
 ---
 
@@ -79,9 +100,10 @@ Every notification (from REST API or WebSocket event) has this shape:
 | `FINDING_ADDED`         | `orgId`, `teamId`, `teamName`, `scheduleId`, `findingsCount` |
 | `FINDING_NC_ADDED`      | `orgId`, `teamId`, `teamName`, `scheduleId`, `ncCount`       |
 | `VERDICT_SET`           | `orgId`, `teamId`, `verdict`, `scheduleId`                   |
-| `AUDITOR_ASSIGNED`      | `teamName`                                                   |
-| `AUDITOR_REMOVED`       | `teamName`                                                   |
-| `ACTION_PLAN_SUBMITTED` | `orgId`, `teamId`, `teamName`, `scheduleId`                  |
+| `AUDITOR_ASSIGNED`      | `teamName`, `scheduleId`                                     |
+| `AUDITOR_REMOVED`       | `teamName`, `scheduleId`                                     |
+| `ACTION_PLAN_SUBMITTED` | `orgId`, `teamId`, `teamName`, `scheduleId`, `count`         |
+| `FINDING_VERIFIED`      | `orgId`, `teamId`, `teamName`, `scheduleId`, `count`         |
 
 ---
 
@@ -397,6 +419,11 @@ const NOTIFICATION_CONFIG = {
   },
   ACTION_PLAN_SUBMITTED: {
     icon: "clipboard-check",
+    color: "green",
+    nav: (d) => `/organizations/${d.orgId}`,
+  },
+  FINDING_VERIFIED: {
+    icon: "check-circle",
     color: "green",
     nav: (d) => `/organizations/${d.orgId}`,
   },

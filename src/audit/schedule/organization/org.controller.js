@@ -12,9 +12,9 @@ import {
   notifyVerdictSet,
   notifyFindingAdded,
   notifyActionPlanSubmitted,
+  notifyFindingVerified,
   extractAuditorIds,
-  diffFindings,
-  detectActionPlanSubmissions,
+  diffVisitChanges,
 } from "../../../notifications/notification.service.js";
 
 const postOrganization = async (req, res) => {
@@ -485,27 +485,40 @@ const putOrganization = async (req, res) => {
       notifyVerdictSet(saved, teamName, scheduleName, actorId, actorName);
     }
 
-    // 3. New findings & NC findings
+    // 3. Visit changes: new findings, action plans, verifications
     if (visits !== undefined) {
-      const addedFindings = diffFindings(oldVisits, visits);
-      if (addedFindings.length > 0) {
+      const changes = diffVisitChanges(oldVisits, visits);
+
+      if (changes.newFindings.length > 0) {
         notifyFindingAdded(
           saved,
           teamName,
           scheduleName,
-          addedFindings,
+          changes.newFindings,
           actorId,
           actorName,
         );
       }
 
-      // 4. Action plan submissions (corrected 0 → 1)
-      const actionPlans = detectActionPlanSubmissions(oldVisits, visits);
-      if (actionPlans.length > 0) {
+      // Action plan submitted (corrected 0 → 1) — notify auditors
+      if (changes.actionPlans.length > 0) {
         notifyActionPlanSubmitted(
           saved,
           teamName,
           scheduleName,
+          changes.actionPlans,
+          actorId,
+          actorName,
+        );
+      }
+
+      // Finding verified (corrected 1 → 2) — notify team leaders
+      if (changes.verifications.length > 0) {
+        notifyFindingVerified(
+          saved,
+          teamName,
+          scheduleName,
+          changes.verifications,
           actorId,
           actorName,
         );

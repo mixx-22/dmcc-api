@@ -96,20 +96,36 @@ const getScheduleTeamLeaderIds = async (scheduleId) => {
 };
 
 /**
- * Extract user IDs from an org's auditors field (handles array or object).
+ * Safely extract a user-ID string from a value that may be a plain string,
+ * a Mongoose ObjectId, or an object with `id` / `_id`.
+ */
+const toIdString = (a) => {
+  if (!a) return null;
+  if (typeof a === "string") return a;
+  // Mongoose ObjectId — use toHexString before checking .id (which is a Buffer)
+  if (typeof a.toHexString === "function") return a.toHexString();
+  if (typeof a === "object") {
+    if (typeof a.id === "string") return a.id;
+    if (a._id) {
+      return typeof a._id.toHexString === "function"
+        ? a._id.toHexString()
+        : a._id.toString();
+    }
+  }
+  return null;
+};
+
+/**
+ * Extract user IDs from an org's auditors field (handles array, object, ObjectIds).
  */
 export const extractAuditorIds = (auditors) => {
   const ids = [];
-  if (Array.isArray(auditors)) {
-    auditors.forEach((a) => {
-      const id = typeof a === "object" && a?.id ? a.id : a;
-      if (id) ids.push(id.toString());
-    });
-  } else if (typeof auditors === "object" && auditors) {
-    Object.values(auditors).forEach((a) => {
-      const id = typeof a === "object" && a?.id ? a.id : a;
-      if (id) ids.push(id.toString());
-    });
+  if (!auditors) return ids;
+
+  const items = Array.isArray(auditors) ? auditors : Object.values(auditors);
+  for (const a of items) {
+    const id = toIdString(a);
+    if (id) ids.push(id);
   }
   return ids;
 };
@@ -448,23 +464,30 @@ export const notifyActionPlanSubmitted = async (
   org,
   teamName,
   scheduleName,
+  findings,
   actorId,
   actorName,
 ) => {
   try {
     const auditorIds = extractAuditorIds(org.auditors);
     if (auditorIds.length > 0) {
+      const count = findings.length;
+      const labels = findings.map((f) =>
+        f.compliance === "MAJOR_NC" ? "Major NC" : "Minor NC",
+      );
+      const unique = [...new Set(labels)].join(" & ");
       await createAndBroadcast(
         auditorIds,
         {
           type: "ACTION_PLAN_SUBMITTED",
           title: "Action Plan Submitted",
-          message: `${actorName} submitted an action plan for a finding in "${teamName}" (${scheduleName}).`,
+          message: `${actorName} submitted ${count} action plan(s) for ${unique} finding(s) in "${teamName}" (${scheduleName}).`,
           data: {
             orgId: org._id,
             teamId: org.team,
             teamName,
             scheduleId: org.auditScheduleId,
+            count,
           },
         },
         actorId,
@@ -478,48 +501,101 @@ export const notifyActionPlanSubmitted = async (
   }
 };
 
+export const notifyFindingVerified = async (
+  org,
+  teamName,
+  scheduleName,
+  findings,
+  actorId,
+  actorName,
+) => {
+  try {
+    const leaderIds = await getTeamLeaderUserIds(org.team);
+    if (leaderIds.length === 0) return;
+
+    const count = findings.length;
+    const labels = findings.map((f) =>
+      f.compliance === "MAJOR_NC" ? "Major NC" : "Minor NC",
+    );
+    const unique = [...new Set(labels)].join(" & ");
+    await createAndBroadcast(
+      leaderIds,
+      {
+        type: "FINDING_VERIFIED",
+        title: "Action Plan Verified",
+        message: `${actorName} verified ${count} action plan(s) for ${unique} finding(s) in "${teamName}" (${scheduleName}).`,
+        data: {
+          orgId: org._id,
+          teamId: org.team,
+          teamName,
+          scheduleId: org.auditScheduleId,
+          count,
+        },
+      },
+      actorId,
+    );
+  } catch (err) {
+    console.error("[Notification] notifyFindingVerified error:", err.message);
+  }
+};
+
 // ──────────────────────────────────────────────────────────────
 // Diff helpers — used by org controller to detect changes
 // ──────────────────────────────────────────────────────────────
 
 /**
- * Flatten all findings from a visits array.
+ * Compare old and new visits **by position** (visit index × finding index)
+ * to distinguish between:
+ *  - newFindings   — findings appended at indices that did not exist before
+ *  - actionPlans   — NC findings whose `corrected` changed 0 → 1
+ *  - verifications  — NC findings whose `corrected` changed 1 → 2
+ *
+ * Position-based comparison avoids the JSON.stringify pitfall where a
+ * field change (e.g. adding an action plan) would look like a "new finding".
  */
-export const getAllFindings = (visits) => {
-  if (!Array.isArray(visits)) return [];
-  return visits.flatMap((v) => (Array.isArray(v?.findings) ? v.findings : []));
-};
+export const diffVisitChanges = (oldVisits, newVisits) => {
+  const result = {
+    newFindings: [],
+    actionPlans: [],
+    verifications: [],
+  };
 
-/**
- * Detect newly added findings by comparing old vs new visits.
- */
-export const diffFindings = (oldVisits, newVisits) => {
-  const oldFindings = getAllFindings(oldVisits);
-  const newFindings = getAllFindings(newVisits);
+  if (!Array.isArray(newVisits)) return result;
+  const safeOld = Array.isArray(oldVisits) ? oldVisits : [];
 
-  const oldSet = new Set(oldFindings.map((f) => JSON.stringify(f)));
-  return newFindings.filter((f) => !oldSet.has(JSON.stringify(f)));
-};
+  for (let vi = 0; vi < newVisits.length; vi++) {
+    const oldFindings = safeOld[vi]?.findings || [];
+    const newFindings = newVisits[vi]?.findings || [];
 
-/**
- * Detect findings whose `corrected` status changed from 0 → 1
- * (indicates an action plan was submitted).
- */
-export const detectActionPlanSubmissions = (oldVisits, newVisits) => {
-  if (!Array.isArray(oldVisits) || !Array.isArray(newVisits)) return [];
+    for (let fi = 0; fi < newFindings.length; fi++) {
+      const newF = newFindings[fi];
+      if (!newF) continue;
 
-  const found = [];
-  for (let vi = 0; vi < Math.min(oldVisits.length, newVisits.length); vi++) {
-    const oldF = oldVisits[vi]?.findings || [];
-    const newF = newVisits[vi]?.findings || [];
+      // Index beyond old array → truly new finding
+      if (fi >= oldFindings.length || !oldFindings[fi]) {
+        result.newFindings.push(newF);
+        continue;
+      }
 
-    for (let fi = 0; fi < Math.min(oldF.length, newF.length); fi++) {
-      const wasZero = !oldF[fi]?.corrected || oldF[fi].corrected === 0;
-      const isOne = newF[fi]?.corrected === 1;
-      if (wasZero && isOne) {
-        found.push(newF[fi]);
+      // Existing finding — check corrected transitions for NC findings
+      const oldF = oldFindings[fi];
+      const isNC =
+        newF.compliance === "MAJOR_NC" || newF.compliance === "MINOR_NC";
+      if (!isNC) continue;
+
+      const oldCorrected = oldF.corrected ?? 0;
+      const newCorrected = newF.corrected ?? 0;
+
+      // Action plan submitted (corrected 0 → 1)
+      if (oldCorrected === 0 && newCorrected === 1) {
+        result.actionPlans.push(newF);
+      }
+      // Auditor verified the action plan (corrected 1 → 2)
+      if (oldCorrected === 1 && newCorrected === 2) {
+        result.verifications.push(newF);
       }
     }
   }
-  return found;
+
+  return result;
 };
