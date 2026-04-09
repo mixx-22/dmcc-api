@@ -21,8 +21,14 @@ const getNotifications = async (req, res) => {
     if (req.query.read === "true") filter.read = true;
     if (req.query.read === "false") filter.read = false;
 
-    // Optional: filter by roleType
-    if (req.query.roleType) filter.roleType = req.query.roleType;
+    // Optional: filter by roleType (validate against allowed values)
+    const allowedRoleTypes = ["admin", "qmr", "auditor", "teamLeader"];
+    if (req.query.roleType) {
+      const roleType = String(req.query.roleType);
+      if (allowedRoleTypes.includes(roleType)) {
+        filter.roleType = roleType;
+      }
+    }
 
     const total = await Notification.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;

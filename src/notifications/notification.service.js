@@ -26,8 +26,12 @@ const actorName = (user) => {
  * @returns {Promise<string[]>} array of user ID strings
  */
 const getUserIdsByRoleType = async (roleType) => {
+  // Validate roleType to prevent NoSQL injection
+  const validTypes = ["admin", "qmr", "auditor", "teamLeader"];
+  if (!validTypes.includes(roleType)) return [];
+
   // 1. Find all role IDs that have this roleType tag
-  const roles = await Role.find({ roleTypes: roleType }).select("_id").lean();
+  const roles = await Role.find({ roleTypes: String(roleType) }).select("_id").lean();
   if (roles.length === 0) return [];
 
   const roleIds = roles.map((r) => r._id.toString());

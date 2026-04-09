@@ -1,4 +1,4 @@
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import jwt from "jsonwebtoken";
 import { URL } from "url";
 
@@ -19,7 +19,7 @@ const sendToUser = (userId, payload) => {
   if (!sockets) return;
   const data = JSON.stringify(payload);
   for (const ws of sockets) {
-    if (ws.readyState === ws.OPEN) {
+    if (ws.readyState === WebSocket.OPEN) {
       ws.send(data);
     }
   }
@@ -109,7 +109,7 @@ const initWebSocket = (server) => {
 
     // Keep-alive ping every 30 seconds
     const interval = setInterval(() => {
-      if (ws.readyState === ws.OPEN) ws.ping();
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
     }, 30_000);
 
     ws.on("close", () => {
