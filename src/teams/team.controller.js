@@ -4,6 +4,7 @@ import { User } from "../users/user.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
 import { createTeamStat } from "./team-stat/teamstat.controller.js";
 import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
 
 // Helper function to extract user data for audit trail
 const extractUserData = (req) => {
@@ -73,6 +74,9 @@ const postTeam = async (req, res) => {
     const {
       name,
       members,
+      objectives,
+      folderId,
+      folderTitle,
       createdBy: createdByBody,
       createdby,
       ...other
@@ -88,7 +92,14 @@ const postTeam = async (req, res) => {
       return res.status(409).json({ message: "Team already exists" });
     }
 
-    const teamData = { name, members, ...other };
+    const teamData = {
+      name,
+      members,
+      objectives,
+      folderId,
+      folderTitle,
+      ...other,
+    };
     if (creator) teamData.createdBy = creator; // use schema field createdBy
 
     const newTeam = new Team(teamData);
@@ -114,7 +125,7 @@ const postTeam = async (req, res) => {
       "TEAMS",
       `Team '${name}' created`,
       extractUserData(req),
-      JSON.stringify({ name, members }),
+      JSON.stringify({ name, members, objectives, folderId, folderTitle }),
     );
 
     return res.status(201).json({ message: "Team created", team: newTeam });
@@ -126,19 +137,33 @@ const postTeam = async (req, res) => {
 
 const getAllTeams = async (req, res) => {
   try {
+    const showUserTeams = parseInt(req.query?.myTeams) === 1;
+    const isAdmin = req.user?.role?.some(
+      (role) => role === process.env.ADMIN_ID,
+    );
+
+    let filter = { deletedAt: null };
+
+    if (showUserTeams && !isAdmin) {
+      const token =
+        req.headers.authorization?.split(" ")[1] ?? req.cookies?.token;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = await User.findById(decoded.id);
+      const teamIds = req.user.team?.map((team) => team.id) || [];
+      filter = { _id: { $in: teamIds }, deletedAt: null };
+    }
+
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+    if (keyword) {
+      const re = new RegExp(keyword, "i");
+      filter.$or = [{ name: re }, { description: re }];
+    }
+
     // pagination
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const maxLimit = 100;
     let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
     if (limit > maxLimit) limit = maxLimit;
-
-    // keyword search (name OR description)
-    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
-    const filter = { deletedAt: null };
-    if (keyword) {
-      const re = new RegExp(keyword, "i");
-      filter.$or = [{ name: re }, { description: re }];
-    }
 
     const total = await Team.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
@@ -221,6 +246,9 @@ const updateTeam = async (req, res) => {
       description,
       leaders,
       members,
+      objectives,
+      folderId,
+      folderTitle,
       createdBy: createdByBody,
       createdby,
       ...other
@@ -307,6 +335,12 @@ const updateTeam = async (req, res) => {
 
     if (Array.isArray(members)) existingTeam.members = members;
 
+    if (Array.isArray(objectives)) existingTeam.objectives = objectives;
+
+    if (folderId !== undefined) existingTeam.folderId = folderId;
+
+    if (folderTitle !== undefined) existingTeam.folderTitle = folderTitle;
+
     // Note: createdBy should not be updated after team creation
     // It represents the original creator and should remain immutable
 
@@ -321,6 +355,9 @@ const updateTeam = async (req, res) => {
     if (description !== undefined) changes.description = description;
     if (Array.isArray(leaders)) changes.leaders = { changed: true };
     if (Array.isArray(members)) changes.members = { changed: true };
+    if (Array.isArray(objectives)) changes.objectives = { changed: true };
+    if (folderId !== undefined) changes.folderId = folderId;
+    if (folderTitle !== undefined) changes.folderTitle = folderTitle;
 
     await postAuditTrailLog(
       "U",

@@ -32,6 +32,18 @@ const teamSchema = new Schema(
       default: [],
     },
 
+    objectives: [{}],
+
+    folderId: {
+      type: String,
+      default: "",
+    },
+
+    folderTitle: {
+      type: String,
+      default: "",
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -45,7 +57,7 @@ const teamSchema = new Schema(
   {
     timestamps: true,
     minimize: false,
-  }
+  },
 );
 
 export const Team = mongoose.model("Team", teamSchema);

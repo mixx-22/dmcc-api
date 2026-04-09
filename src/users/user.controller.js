@@ -231,15 +231,51 @@ const getAllUsers = async (req, res) => {
 
     const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
     const filter = { deletedAt: null };
+    const andFilters = [];
+
     if (keyword) {
       const re = new RegExp(keyword, "i");
-      filter.$or = [
-        { firstName: re },
-        { lastName: re },
-        { email: re },
-        { username: re },
-        { employeeId: re },
-      ];
+      andFilters.push({
+        $or: [
+          { firstName: re },
+          { lastName: re },
+          { email: re },
+          { username: re },
+          { employeeId: re },
+        ],
+      });
+    }
+
+    const roleFilter = (req.query.role ?? req.query.roleTitle ?? "")
+      .toString()
+      .trim();
+
+    if (roleFilter) {
+      const roleDoc = await Role.findOne({
+        title: new RegExp(roleFilter, "i"),
+      })
+        .select("_id")
+        .lean();
+
+      if (!roleDoc) {
+        return res.status(404).json({ message: "Role not found." });
+      }
+
+      const roleId = roleDoc._id;
+      const roleIdStr = roleId.toString();
+
+      andFilters.push({
+        $or: [
+          { role: roleId },
+          { role: roleIdStr },
+          { role: { $elemMatch: { $eq: roleId } } },
+          { role: { $elemMatch: { $eq: roleIdStr } } },
+        ],
+      });
+    }
+
+    if (andFilters.length > 0) {
+      filter.$and = andFilters;
     }
 
     const total = await User.countDocuments(filter);
@@ -315,7 +351,9 @@ const getUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid user id." });
     }
 
+    // Retrieve any user (not restricted by role)
     const user = await User.findById(id).select("-password -__v").lean();
+
     if (!user) return res.status(404).json({ message: "User not found." });
 
     // Resolve role objects with id and title
@@ -847,7 +885,6 @@ const deleteUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
-    console.log("loginUser body:", req.body);
     const { usernameOrEmail, username, email, password } = req.body ?? {};
 
     const identifier = usernameOrEmail ?? username ?? email;

@@ -1,12 +1,12 @@
-import Document from "../documents/document.model.js";
+import { Document } from "../documents/document.model.js";
 import { RecentDocs } from "../documentLogs/recentDocuments/recentDocs.model.js";
 import { postAuditTrailLog } from "../documentLogs/auditTrail/auditTrail.controller.js";
-import Approval from "../approvals/approval.model.js";
 import { FileType } from "../fileType/fileType.model.js";
 import {
   putFileTeamStat,
   removeFileTeamStat,
 } from "../teams/team-stat/teamstat.controller.js";
+import Request from "../requests/request.model.js";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 const postDocument = async (req, res) => {
   try {
     // Handle both JSON and form-data
-    let permissionOverrides, metadata, docPath, privacy;
+    let permissionOverrides, metadata, privacy;
 
     // If privacy is a string (from form-data), parse it
     if (req.body.privacy) {
@@ -71,35 +71,6 @@ const postDocument = async (req, res) => {
         }
       } else {
         metadata = req.body.metadata;
-      }
-    }
-
-    // Handle path - should be an array
-    if (req.body.path !== undefined) {
-      if (Array.isArray(req.body.path)) {
-        docPath = req.body.path;
-      } else if (typeof req.body.path === "string") {
-        // If it's a JSON string representing an array, parse it
-        if (req.body.path.startsWith("[")) {
-          try {
-            docPath = JSON.parse(req.body.path);
-          } catch (error) {
-            return res.status(400).json({
-              success: false,
-              message:
-                "Invalid JSON format for 'path' field. Path should be an array like []",
-              error: error.message,
-            });
-          }
-        } else {
-          // If it's a plain string, convert to array with that string
-          docPath = req.body.path ? [req.body.path] : [];
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "Path should be an array.",
-        });
       }
     }
 
@@ -157,6 +128,96 @@ const postDocument = async (req, res) => {
     // Use metadata as provided (expects key to be in metadata)
     let finalMetadata = metadata || {};
 
+    console.log(
+      "postDocument - finalMetadata:",
+      JSON.stringify(finalMetadata, null, 2),
+    );
+
+    // Check for duplicate document number if documentNumber exists in metadata
+    if (finalMetadata.documentNumber) {
+      const documentNumber = finalMetadata.documentNumber.toString().trim();
+
+      console.log("Checking for duplicate document number:", documentNumber);
+
+      if (!documentNumber) {
+        return res.status(400).json({
+          success: false,
+          message: "Document number cannot be empty",
+        });
+      }
+
+      // Escape special regex characters
+      const escapedDocNumber = documentNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+
+      console.log("Escaped document number:", escapedDocNumber);
+
+      // Check for case-insensitive duplicate document number in Documents
+      const existingDocument = await Document.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        deletedAt: null,
+      });
+
+      console.log("Existing document found:", existingDocument?._id);
+      if (existingDocument) {
+        console.log(
+          "Existing document number:",
+          existingDocument.metadata?.documentNumber,
+        );
+      }
+
+      if (existingDocument) {
+        console.log("RETURNING 400 ERROR - DUPLICATE FOUND");
+        return res.status(400).json({
+          success: false,
+          message: `Document number(s) already exist in the system: ${existingDocument.metadata?.documentNumber}. Please use unique value.`,
+          documentNumber: documentNumber,
+          existingDocumentId: existingDocument._id,
+          existingDocumentNumber: existingDocument.metadata?.documentNumber,
+        });
+      }
+
+      console.log("No existing document found, continuing...");
+
+      // Check for case-insensitive duplicate document number in Requests (exclude DISCARD and PUBLISH type)
+      const existingRequest = await Request.findOne({
+        "metadata.documentNumber": {
+          $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+        },
+        type: { $nin: ["DISCARD", "PUBLISH"] },
+      });
+
+      console.log("Existing request found:", existingRequest?._id);
+      if (existingRequest) {
+        console.log(
+          "Existing request number:",
+          existingRequest.metadata?.documentNumber,
+        );
+        console.log("Existing request type:", existingRequest.type);
+      }
+
+      if (existingRequest) {
+        return res.status(400).json({
+          success: false,
+          message: `Document number(s) already exist in the system: ${existingRequest.metadata?.documentNumber}. Please use unique value.`,
+          documentNumber: documentNumber,
+          existingRequestId: existingRequest._id,
+          existingRequestNumber: existingRequest.metadata?.documentNumber,
+          existingRequestType: existingRequest.type,
+        });
+      }
+
+      // Update the document number with trimmed value
+      finalMetadata.documentNumber = documentNumber;
+      console.log("Document number validation passed");
+    } else {
+      console.log("No document number provided in metadata");
+    }
+
     // Set default checkedOut value for file type
     if (type === "file" && finalMetadata.checkedOut === undefined) {
       finalMetadata.checkedOut = 1;
@@ -178,9 +239,13 @@ const postDocument = async (req, res) => {
       title,
       description,
       type,
-      status: status !== undefined ? status : 0,
+      status:
+        type === "file" && (status === undefined || status === 0)
+          ? -1
+          : status !== undefined
+            ? status
+            : -1,
       parentId: parentId || null,
-      path: docPath || [],
       owner,
       privacy: privacy || { users: [], teams: [], roles: [] },
       permissionOverrides: permissionOverrides || {
@@ -226,6 +291,45 @@ const postDocument = async (req, res) => {
         console.error("Error updating team stats:", error);
         // Don't fail the request if team stat update fails
       }
+    }
+
+    // Create request entry for the document (only for file type with quality documents)
+    if (savedDocument.type === "file" && savedDocument.metadata?.fileType) {
+      try {
+        const fileType = await FileType.findById(
+          savedDocument.metadata.fileType,
+        );
+        console.log("FileType found:", fileType);
+        console.log("isQualityDocument:", fileType?.isQualityDocument);
+
+        if (fileType && fileType.isQualityDocument === true) {
+          const newRequest = new Request({
+            documentId: savedDocument._id.toString(),
+            title: savedDocument.title || "",
+            description: savedDocument.description || "",
+            metadata: savedDocument.metadata || {},
+            type: "UPLOAD",
+            status: -1,
+            mode: "NEW",
+            requestedBy: owner,
+          });
+          const savedRequest = await newRequest.save();
+          console.log("Request created successfully:", savedRequest._id);
+        } else {
+          console.log("Request not created - isQualityDocument is not true");
+        }
+      } catch (error) {
+        console.error("Error creating request:", error);
+        console.error("Error stack:", error.stack);
+        // Don't fail the document creation if request creation fails
+      }
+    } else {
+      console.log(
+        "Request not created - conditions not met. Type:",
+        savedDocument.type,
+        "FileType:",
+        savedDocument.metadata?.fileType,
+      );
     }
 
     // Return without populating for now to isolate the issue
@@ -619,15 +723,11 @@ const getDocuments = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: keyword
-        ? "Documents retrieved successfully"
-        : folder
-          ? "Folder contents retrieved successfully"
-          : "Root documents retrieved successfully",
+      message: "Documents retrieved successfully",
       data: responseData,
     });
   } catch (error) {
-    console.error("Error in getDocument:", error);
+    console.error("Error in getDocuments:", error);
 
     return res.status(500).json({
       success: false,
@@ -703,8 +803,17 @@ const getDocument = async (req, res) => {
         fileTypeId = fileType.toString();
       }
 
-      // Only query if it's a valid ObjectId
-      if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+      // Skip transformation if fileType is "document" (legacy string value)
+      if (fileTypeId === "document") {
+        responseData.metadata.fileType = {
+          id: null,
+          name: "document",
+          isQualityDocument: false,
+          requiresApproval: false,
+          trackVersioning: false,
+        };
+      } else if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+        // Only query if it's a valid ObjectId
         const fileTypeData = await FileType.findById(fileTypeId)
           .select("_id name isQualityDocument requiresApproval trackVersioning")
           .lean();
@@ -718,23 +827,54 @@ const getDocument = async (req, res) => {
             trackVersioning: fileTypeData.trackVersioning || false,
           };
         } else {
+          // FileType not found, try to get default fileType
+          const defaultFileType = await FileType.findOne({ isDefault: true })
+            .select(
+              "_id name isQualityDocument requiresApproval trackVersioning",
+            )
+            .lean();
+
+          if (defaultFileType) {
+            responseData.metadata.fileType = {
+              id: defaultFileType._id,
+              name: defaultFileType.name || "",
+              isQualityDocument: defaultFileType.isQualityDocument || false,
+              requiresApproval: defaultFileType.requiresApproval || false,
+              trackVersioning: defaultFileType.trackVersioning || false,
+            };
+          } else {
+            responseData.metadata.fileType = {
+              id: fileTypeId,
+              name: "",
+              isQualityDocument: false,
+              requiresApproval: false,
+              trackVersioning: false,
+            };
+          }
+        }
+      } else {
+        // Invalid ObjectId, try to get default fileType
+        const defaultFileType = await FileType.findOne({ isDefault: true })
+          .select("_id name isQualityDocument requiresApproval trackVersioning")
+          .lean();
+
+        if (defaultFileType) {
           responseData.metadata.fileType = {
-            id: fileTypeId,
+            id: defaultFileType._id,
+            name: defaultFileType.name || "",
+            isQualityDocument: defaultFileType.isQualityDocument || false,
+            requiresApproval: defaultFileType.requiresApproval || false,
+            trackVersioning: defaultFileType.trackVersioning || false,
+          };
+        } else {
+          responseData.metadata.fileType = {
+            id: null,
             name: "",
             isQualityDocument: false,
             requiresApproval: false,
             trackVersioning: false,
           };
         }
-      } else {
-        // Invalid ObjectId, set to null
-        responseData.metadata.fileType = {
-          id: null,
-          name: "",
-          isQualityDocument: false,
-          requiresApproval: false,
-          trackVersioning: false,
-        };
       }
     }
 
@@ -786,6 +926,11 @@ const getDocument = async (req, res) => {
         });
       }
 
+      // Get default fileType for fallback
+      const defaultFileType = await FileType.findOne({ isDefault: true })
+        .select("_id name isQualityDocument requiresApproval trackVersioning")
+        .lean();
+
       // Transform fileType for file children
       const transformedChildren = children.map((child) => {
         if (child.type === "file" && child.metadata?.fileType) {
@@ -799,8 +944,17 @@ const getDocument = async (req, res) => {
             fileTypeId = fileType.toString();
           }
 
-          // Only transform if it's a valid ObjectId
-          if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+          // Skip transformation if fileType is "document" (legacy string value)
+          if (fileTypeId === "document") {
+            child.metadata.fileType = {
+              id: null,
+              name: "document",
+              isQualityDocument: false,
+              requiresApproval: false,
+              trackVersioning: false,
+            };
+          } else if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
+            // Only transform if it's a valid ObjectId
             const fileTypeData = fileTypesMap[fileTypeId];
 
             if (fileTypeData) {
@@ -812,23 +966,44 @@ const getDocument = async (req, res) => {
                 trackVersioning: fileTypeData.trackVersioning || false,
               };
             } else {
+              // FileType not found, use default fileType
+              if (defaultFileType) {
+                child.metadata.fileType = {
+                  id: defaultFileType._id,
+                  name: defaultFileType.name || "",
+                  isQualityDocument: defaultFileType.isQualityDocument || false,
+                  requiresApproval: defaultFileType.requiresApproval || false,
+                  trackVersioning: defaultFileType.trackVersioning || false,
+                };
+              } else {
+                child.metadata.fileType = {
+                  id: fileTypeId,
+                  name: "",
+                  isQualityDocument: false,
+                  requiresApproval: false,
+                  trackVersioning: false,
+                };
+              }
+            }
+          } else {
+            // Invalid ObjectId, use default fileType
+            if (defaultFileType) {
               child.metadata.fileType = {
-                id: fileTypeId,
+                id: defaultFileType._id,
+                name: defaultFileType.name || "",
+                isQualityDocument: defaultFileType.isQualityDocument || false,
+                requiresApproval: defaultFileType.requiresApproval || false,
+                trackVersioning: defaultFileType.trackVersioning || false,
+              };
+            } else {
+              child.metadata.fileType = {
+                id: null,
                 name: "",
                 isQualityDocument: false,
                 requiresApproval: false,
                 trackVersioning: false,
               };
             }
-          } else {
-            // Invalid ObjectId, set to null
-            child.metadata.fileType = {
-              id: null,
-              name: "",
-              isQualityDocument: false,
-              requiresApproval: false,
-              trackVersioning: false,
-            };
           }
         }
         return child;
@@ -858,6 +1033,31 @@ const getDocument = async (req, res) => {
         delete responseData.parentId;
       }
     }
+
+    // Check if there's a request associated with this document
+    let requestId = null;
+    let mode = null;
+    try {
+      const request = await Request.findOne({
+        documentId: document._id.toString(),
+      })
+        .select("_id mode")
+        .lean();
+
+      if (request) {
+        requestId = request._id.toString();
+        mode = request.mode || null;
+      }
+    } catch (requestError) {
+      console.error("Error fetching request:", requestError);
+      // Don't fail the document retrieval if request lookup fails
+    }
+
+    // Add requestData to response
+    responseData.requestData = {
+      requestId: requestId || "",
+      mode: mode || "",
+    };
 
     // Log document retrieval to audit trail
     await postAuditTrailLog(
@@ -977,7 +1177,7 @@ const updateDocument = async (req, res) => {
     }
 
     // Parse JSON fields from form-data if they exist
-    let permissionOverrides, metadata, docPath, privacy;
+    let permissionOverrides, metadata, privacy;
 
     if (req.body.privacy) {
       if (typeof req.body.privacy === "string") {
@@ -1029,32 +1229,6 @@ const updateDocument = async (req, res) => {
       }
     }
 
-    if (req.body.path !== undefined) {
-      if (Array.isArray(req.body.path)) {
-        docPath = req.body.path;
-      } else if (typeof req.body.path === "string") {
-        if (req.body.path.startsWith("[")) {
-          try {
-            docPath = JSON.parse(req.body.path);
-          } catch (error) {
-            return res.status(400).json({
-              success: false,
-              message:
-                "Invalid JSON format for 'path' field. Path should be an array like []",
-              error: error.message,
-            });
-          }
-        } else {
-          docPath = req.body.path ? [req.body.path] : [];
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: "Path should be an array.",
-        });
-      }
-    }
-
     const { title, description, type, status, parentId } = req.body;
 
     // Capture old teams BEFORE updating document (for team stat tracking)
@@ -1099,7 +1273,6 @@ const updateDocument = async (req, res) => {
       }
       document.parentId = parentId || null;
     }
-    if (docPath !== undefined) document.path = docPath;
     if (privacy !== undefined) document.privacy = privacy;
     if (permissionOverrides !== undefined)
       document.permissionOverrides = permissionOverrides;
@@ -1485,471 +1658,6 @@ const previewFile = async (req, res) => {
   }
 };
 
-const submitDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Check if document is a file
-    if (document.type !== "file") {
-      return res.status(400).json({
-        success: false,
-        message: "Only file type documents can be submitted",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 1;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 0;
-
-    await document.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Create approval with type: "submit"
-    const newApproval = new Approval({
-      title: `Submission: ${document.title}`,
-      description: `Document submitted for approval`,
-      metadata: document.metadata,
-      entityId: document._id,
-      requestedBy: userId,
-      type: "submit",
-      status: 0, // Under Review
-    });
-
-    await newApproval.save();
-
-    // Log document submission to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document submitted: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 1,
-        checkedOut: 0,
-        approvalId: newApproval._id,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document submitted successfully",
-      data: {
-        document,
-        approval: newApproval,
-      },
-    });
-  } catch (error) {
-    console.error("Error in submitDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to submit document",
-      error: error.message,
-    });
-  }
-};
-
-const rejectDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { approvalId } = req.body;
-
-    // Validate approvalId
-    if (!approvalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Approval ID is required",
-      });
-    }
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Find the approval
-    const approval = await Approval.findById(approvalId);
-    if (!approval) {
-      return res.status(404).json({
-        success: false,
-        message: "Approval not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 0;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 1;
-
-    await document.save();
-
-    // Update approval
-    approval.type = "reject";
-    approval.mode = "Department";
-    approval.status = 2; // Rejected
-
-    await approval.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document rejection to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document rejected: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 0,
-        checkedOut: 1,
-        approvalId: approval._id,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document rejected successfully",
-      data: {
-        document,
-        approval,
-      },
-    });
-  } catch (error) {
-    console.error("Error in rejectDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to reject document",
-      error: error.message,
-    });
-  }
-};
-
-const discardDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 0;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 0;
-
-    await document.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document discard to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document discarded: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 0,
-        checkedOut: 0,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document discarded successfully",
-      data: document,
-    });
-  } catch (error) {
-    console.error("Error in discardDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to discard document",
-      error: error.message,
-    });
-  }
-};
-
-const approveDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { approvalId } = req.body;
-
-    // Validate approvalId
-    if (!approvalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Approval ID is required",
-      });
-    }
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Find the approval
-    const approval = await Approval.findById(approvalId);
-    if (!approval) {
-      return res.status(404).json({
-        success: false,
-        message: "Approval not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 1;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 0;
-
-    await document.save();
-
-    // Update approval
-    approval.type = "approved";
-    approval.mode = "Document Controller";
-    approval.status = 0; // Under Review
-
-    await approval.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document approval to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document approved: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 1,
-        checkedOut: 0,
-        approvalId: approval._id,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document approved successfully",
-      data: {
-        document,
-        approval,
-      },
-    });
-  } catch (error) {
-    console.error("Error in approveDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to approve document",
-      error: error.message,
-    });
-  }
-};
-
-const publishDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { approvalId } = req.body;
-
-    // Validate approvalId
-    if (!approvalId) {
-      return res.status(400).json({
-        success: false,
-        message: "Approval ID is required",
-      });
-    }
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Find the approval
-    const approval = await Approval.findById(approvalId);
-    if (!approval) {
-      return res.status(404).json({
-        success: false,
-        message: "Approval not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 2;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 0;
-
-    await document.save();
-
-    // Update approval
-    approval.mode = "Document Controller";
-    approval.status = 1; // Approved
-
-    await approval.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document publication to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document published: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 2,
-        checkedOut: 0,
-        approvalId: approval._id,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document published successfully",
-      data: {
-        document,
-        approval,
-      },
-    });
-  } catch (error) {
-    console.error("Error in publishDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to publish document",
-      error: error.message,
-    });
-  }
-};
-
-const reviseDocument = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    // Find the document
-    const document = await Document.findById(id);
-    if (!document) {
-      return res.status(404).json({
-        success: false,
-        message: "Document not found",
-      });
-    }
-
-    // Update document status and metadata
-    document.status = 0;
-    if (!document.metadata) {
-      document.metadata = {};
-    }
-    document.metadata.checkedOut = 1;
-
-    await document.save();
-
-    // Get user information
-    const userId = req.user?._id || req.user?.id;
-    const userName = req.user
-      ? `${req.user.firstName} ${req.user.lastName}`
-      : "Unknown User";
-
-    // Log document request to audit trail
-    await postAuditTrailLog(
-      "U",
-      document._id,
-      "DOCUMENTS",
-      `Document requested: ${document.title}`,
-      {
-        id: userId,
-        name: userName,
-      },
-      JSON.stringify({
-        status: 0,
-        checkedOut: 1,
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Document requested successfully",
-      data: document,
-    });
-  } catch (error) {
-    console.error("Error in requestDocument:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to request document",
-      error: error.message,
-    });
-  }
-};
-
 const getQualityDocument = async (req, res) => {
   try {
     // pagination
@@ -1960,6 +1668,15 @@ const getQualityDocument = async (req, res) => {
 
     // keyword search
     const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+
+    // documentNumber search
+    const documentNumber = (req.query.documentNumber ?? "").toString().trim();
+
+    // teamId filter
+    const teamId = (req.query.teamId ?? "").toString().trim();
+
+    // published filter (0 or 1)
+    const published = req.query.published;
 
     // First, get all FileTypes where isQualityDocument is true
     const qualityFileTypes = await FileType.find({
@@ -1986,6 +1703,7 @@ const getQualityDocument = async (req, res) => {
     const filter = {
       type: "file",
       deletedAt: null,
+      status: 2,
     };
 
     // Add fileType filter with $or to handle both ObjectId and string
@@ -1996,8 +1714,21 @@ const getQualityDocument = async (req, res) => {
       ],
     };
 
-    // Add keyword search if provided
-    if (keyword) {
+    // Add documentNumber search if provided (exact match)
+    if (documentNumber) {
+      const escapedDocNumber = documentNumber.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      filter.$and = [
+        fileTypeFilter,
+        {
+          "metadata.documentNumber": {
+            $regex: new RegExp(`^${escapedDocNumber}$`, "i"),
+          },
+        },
+      ];
+    } else if (keyword) {
       const re = new RegExp(keyword, "i");
       // Combine fileType filter with keyword search
       filter.$and = [
@@ -2013,6 +1744,27 @@ const getQualityDocument = async (req, res) => {
     } else {
       // Just use fileType filter
       Object.assign(filter, fileTypeFilter);
+    }
+
+    // Filter by teamId if provided
+    if (teamId) {
+      if (mongoose.Types.ObjectId.isValid(teamId)) {
+        filter["metadata.team"] = teamId;
+      }
+    }
+
+    // Filter by published status
+    if (published !== undefined) {
+      const publishedValue = parseInt(published, 10);
+      if (publishedValue === 0) {
+        // status=2 AND checkedOut=0
+        filter.status = 2;
+        filter["metadata.checkedOut"] = 0;
+      } else if (publishedValue === 1) {
+        // status=2 AND checkedOut=1
+        filter.status = 2;
+        filter["metadata.checkedOut"] = 1;
+      }
     }
 
     const total = await Document.countDocuments(filter);
@@ -2053,16 +1805,17 @@ const getQualityDocument = async (req, res) => {
       return doc;
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+      message: "Quality documents retrieved successfully",
       data,
       meta: { total, page, limit, totalPages },
     });
   } catch (error) {
     console.error("Error in getQualityDocument:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Server error.",
+      message: "Failed to retrieve quality documents",
       error: error.message,
     });
   }
@@ -2076,12 +1829,6 @@ export {
   deleteDocument,
   downloadFile,
   uploadFile,
-  submitDocument,
-  rejectDocument,
-  discardDocument,
-  approveDocument,
-  publishDocument,
-  reviseDocument,
   previewFile,
   getQualityDocument,
 };

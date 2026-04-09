@@ -1,4 +1,4 @@
-import { Role, defaultPermissions } from "../roles/role.model.js";
+import { Role, defaultPermissions, ROLE_TYPES } from "../roles/role.model.js";
 
 const deepMerge = (target = {}, source = {}) => {
   for (const key of Object.keys(source)) {
@@ -16,14 +16,31 @@ const deepMerge = (target = {}, source = {}) => {
   return target;
 };
 
+const validateRoleTypes = (roleTypes) => {
+  if (!Array.isArray(roleTypes)) {
+    return "roleTypes must be an array.";
+  }
+  const invalid = roleTypes.filter((t) => !ROLE_TYPES.includes(t));
+  if (invalid.length > 0) {
+    return `Invalid roleTypes: ${invalid.join(", ")}. Allowed values: ${ROLE_TYPES.join(", ")}.`;
+  }
+  return null;
+};
+
 const postRole = async (req, res) => {
   try {
-    const { title, description, permission, permissions, isSystemRole } =
+    const { title, description, permission, permissions, isSystemRole, roleTypes } =
       req.body;
     const perms = permission ?? permissions; // accept either key
 
     if (!title || typeof title !== "string" || !title.trim()) {
       return res.status(400).json({ message: "Title is required." });
+    }
+
+    // Validate roleTypes if provided
+    if (roleTypes !== undefined) {
+      const err = validateRoleTypes(roleTypes);
+      if (err) return res.status(400).json({ message: err });
     }
 
     // Permissions are optional, use defaults if not provided
@@ -44,6 +61,7 @@ const postRole = async (req, res) => {
       description,
       permissions: finalPermissions,
       isSystemRole: isSystemRole ?? false,
+      roleTypes: roleTypes ?? [],
     });
 
     res.status(201).json({
@@ -53,6 +71,7 @@ const postRole = async (req, res) => {
         title: role.title,
         description: role.description,
         permissions: role.permissions,
+        roleTypes: role.roleTypes,
       },
     });
   } catch (error) {
@@ -147,8 +166,16 @@ const putRole = async (req, res) => {
       role.markModified("permissions");
     }
 
-    // apply other updatable fields (exclude permission(s))
-    const { permission, permissions, ...other } = req.body;
+    // apply other updatable fields (exclude permission(s) and roleTypes)
+    const { permission, permissions, roleTypes, ...other } = req.body;
+
+    // validate and apply roleTypes if provided
+    if (roleTypes !== undefined) {
+      const err = validateRoleTypes(roleTypes);
+      if (err) return res.status(400).json({ message: err });
+      role.roleTypes = roleTypes;
+    }
+
     Object.keys(other).forEach((k) => {
       role[k] = other[k];
     });
