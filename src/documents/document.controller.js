@@ -236,6 +236,30 @@ const postDocument = async (req, res) => {
       }
     }
 
+    // Auto-populate metadata.size from the stored file when the client did not
+    // forward the size value from the /upload response.  Without this, storage
+    // counting and limit enforcement are both silently bypassed.
+    if (type === "file" && finalMetadata.key && !finalMetadata.size) {
+      try {
+        const uploadsDir =
+          process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
+        const uploadedFiles = fs.readdirSync(uploadsDir);
+        const matchedFile = uploadedFiles.find((f) =>
+          f.startsWith(finalMetadata.key),
+        );
+        if (matchedFile) {
+          finalMetadata.size = fs.statSync(
+            path.join(uploadsDir, matchedFile),
+          ).size;
+        }
+      } catch (sizeErr) {
+        console.warn(
+          "[postDocument] Could not auto-detect file size:",
+          sizeErr.message,
+        );
+      }
+    }
+
     // Enforce storage limits for file uploads assigned to teams
     const assignedTeams = privacy?.teams || [];
     if (type === "file" && assignedTeams.length > 0) {
@@ -1340,7 +1364,30 @@ const updateDocument = async (req, res) => {
         .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
       if (teamsBeingAdded.length > 0) {
-        const fileSize = Number(document.metadata?.size) || 0;
+        // Resolve the file size, falling back to the on-disk file when the
+        // document's metadata.size was never stored (matches postDocument fix).
+        let fileSize = Number(document.metadata?.size) || 0;
+        if (fileSize === 0 && document.metadata?.key) {
+          try {
+            const uploadsDir =
+              process.env.DOCUMENTS_DIR || path.join(__dirname, "../../uploads");
+            const uploadedFiles = fs.readdirSync(uploadsDir);
+            const matchedFile = uploadedFiles.find((f) =>
+              f.startsWith(document.metadata.key),
+            );
+            if (matchedFile) {
+              fileSize = fs.statSync(
+                path.join(uploadsDir, matchedFile),
+              ).size;
+            }
+          } catch (sizeErr) {
+            console.warn(
+              "[updateDocument] Could not auto-detect file size:",
+              sizeErr.message,
+            );
+          }
+        }
+
         if (fileSize > 0) {
           const [teams, teamStats] = await Promise.all([
             Team.find({ _id: { $in: teamsBeingAdded } }).select(
