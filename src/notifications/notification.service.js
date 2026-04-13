@@ -321,7 +321,7 @@ export const notifyOrganizationAdded = async (
         leaderIds,
         {
           type: "TEAM_ADDED_AS_ORG",
-          title: "Your Team Added to Audit",
+          title: "Your Team Added to Audit Schedule",
           message: `Your team "${teamName}" has been added as an organization in "${scheduleName}".`,
           data: {
             orgId: org._id,
@@ -338,15 +338,21 @@ export const notifyOrganizationAdded = async (
   }
 };
 
-export const notifyOrganizationDeleted = async (org, actorId, actorName) => {
+export const notifyOrganizationDeleted = async (
+  org,
+  teamName,
+  scheduleName,
+  actorId,
+  actorName,
+) => {
   try {
     const adminIds = await getUsersByRoleType("admin");
     await createAndBroadcast(
       adminIds,
       {
         type: "ORGANIZATION_DELETED",
-        title: "Organization Removed from Audit",
-        message: `${actorName} removed an organization from the audit schedule.`,
+        title: "Organization Removed from Audit Schedule",
+        message: `${actorName} removed "${teamName}" from the audit schedule "${scheduleName}".`,
         data: { orgId: org._id, scheduleId: org.auditScheduleId },
       },
       actorId,
@@ -451,7 +457,7 @@ export const notifyFindingAdded = async (
       adminIds,
       {
         type: "FINDING_ADDED",
-        title: "Finding Added",
+        title: "Audit Finding Added",
         message: `${actorName} added ${newFindings.length} finding(s) for "${teamName}" in "${scheduleName}".`,
         data: {
           orgId: org._id,
@@ -524,7 +530,7 @@ export const notifyActionPlanSubmitted = async (
         {
           type: "ACTION_PLAN_SUBMITTED",
           title: "Action Plan Submitted",
-          message: `${actorName} submitted ${count} action plan(s) for ${unique} finding(s) in "${teamName}" (${scheduleName}).`,
+          message: `${actorName} submitted ${count} action plan(s) for ${unique} finding(s) in "${teamName}" in "${scheduleName}".`,
           data: {
             orgId: org._id,
             teamId: org.team,
@@ -566,7 +572,7 @@ export const notifyFindingVerified = async (
       {
         type: "FINDING_VERIFIED",
         title: "Action Plan Verified",
-        message: `${actorName} verified ${count} action plan(s) for ${unique} finding(s) in "${teamName}" (${scheduleName}).`,
+        message: `${actorName} verified ${count} action plan(s) for ${unique} finding(s) in "${teamName}" in "${scheduleName}".`,
         data: {
           orgId: org._id,
           teamId: org.team,
