@@ -633,10 +633,17 @@ export const diffVisitChanges = (oldVisits, newVisits) => {
         result.actionPlans.push(newF);
       }
 
-      // Auditor verified the action plan (corrected 1 → 2)
+      // Auditor verified the action plan:
+      //  - legacy signal: corrected 1 → 2
+      //  - new signal: correctionDate changed from null/falsy to non-null
       const oldCorrected = oldF.corrected ?? 0;
       const newCorrected = newF.corrected ?? 0;
-      if (oldCorrected === 1 && newCorrected === 2) {
+      const oldCorrectionDate = oldF.correctionDate ?? null;
+      const newCorrectionDate = newF.correctionDate ?? null;
+      if (
+        (oldCorrected === 1 && newCorrected === 2) ||
+        (oldCorrectionDate == null && newCorrectionDate != null)
+      ) {
         result.verifications.push(newF);
       }
     }
