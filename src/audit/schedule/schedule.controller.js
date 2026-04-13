@@ -1,4 +1,5 @@
 import { Schedule } from "./schedule.model.js";
+import { AuditCodeCounter } from "./auditCodeCounter.model.js";
 import { Team } from "../../teams/team.model.js";
 import Standard from "./Standard/standard.model.js";
 import mongoose from "mongoose";
@@ -17,8 +18,13 @@ const AUDIT_TYPE_CODES = {
   operational: "OPR",
 };
 
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
+/**
+ * Atomically increments the per-type-per-year counter and returns the
+ * next audit code.  Using findOneAndUpdate + $inc ensures no two
+ * concurrent requests can receive the same sequence number.
+ * Deleted audits permanently consume their sequence so the history
+ * remains unambiguous.
+ */
 const generateAuditCode = async (auditType) => {
   const auditTypeValue = (auditType ?? "").toString().trim();
   const auditTypeKey = auditTypeValue.toLowerCase();
@@ -32,19 +38,49 @@ const generateAuditCode = async (auditType) => {
   }
 
   const year = new Date().getFullYear();
-  const yearStart = new Date(`${year}-01-01T00:00:00.000Z`);
-  const yearEnd = new Date(`${year + 1}-01-01T00:00:00.000Z`);
-  const auditTypeMatch = new RegExp(`^${escapeRegExp(auditTypeValue)}$`, "i");
 
-  const existingCount = await Schedule.countDocuments({
-    auditType: auditTypeMatch,
-    deletedAt: null,
-    createdAt: { $gte: yearStart, $lt: yearEnd },
-  });
+  const counter = await AuditCodeCounter.findOneAndUpdate(
+    { auditTypeCode, year },
+    { $inc: { sequence: 1 } },
+    { new: true, upsert: true },
+  );
 
-  const sequence = String(existingCount + 1).padStart(2, "0");
+  const sequence = String(counter.sequence).padStart(2, "0");
 
   return { auditCode: `${auditTypeCode}-${year}-${sequence}` };
+};
+
+/**
+ * Releases an audit code back to the pool only when no higher
+ * sequence has been issued for the same type and year.
+ *
+ * This covers the case where an audit's type is changed before any
+ * subsequent audit of the same type is created:
+ *   INT-2025-03 changed to EXT → INT counter goes back to 02 so the
+ *   next internal audit gets INT-2025-03 again.
+ *
+ * If INT-2025-04 already exists the filter won't match and the
+ * counter is left unchanged, preserving the full sequence.
+ *
+ * @param {string} auditCode - The code to release, e.g. "INT-2025-03"
+ */
+const releaseAuditCode = async (auditCode) => {
+  if (!auditCode) return;
+
+  const parts = auditCode.split("-");
+  if (parts.length !== 3) return;
+
+  const [typeCode, yearStr, seqStr] = parts;
+  const year = parseInt(yearStr, 10);
+  const sequence = parseInt(seqStr, 10);
+
+  if (isNaN(year) || isNaN(sequence) || sequence < 1) return;
+
+  // Decrement only when this sequence is still the current maximum
+  await AuditCodeCounter.findOneAndUpdate(
+    { auditTypeCode: typeCode, year, sequence },
+    { $inc: { sequence: -1 } },
+  );
 };
 
 const postSchedule = async (req, res) => {
@@ -69,13 +105,7 @@ const postSchedule = async (req, res) => {
       return res.status(400).json({ message: "Title is required." });
     }
 
-    const { auditCode: generatedAuditCode, error: auditCodeError } =
-      await generateAuditCode(auditType);
-    if (auditCodeError) {
-      return res.status(400).json({ message: auditCodeError });
-    }
-
-    // Check if there's an ongoing audit (status = 0)
+    // Check if there's an ongoing audit (status = 0) before reserving a code
     const ongoingAudit = await Schedule.findOne({
       status: 0,
       deletedAt: null,
@@ -89,6 +119,12 @@ const postSchedule = async (req, res) => {
           title: ongoingAudit.title,
         },
       });
+    }
+
+    const { auditCode: generatedAuditCode, error: auditCodeError } =
+      await generateAuditCode(auditType);
+    if (auditCodeError) {
+      return res.status(400).json({ message: auditCodeError });
     }
 
     const scheduleData = {
@@ -283,15 +319,29 @@ const putSchedule = async (req, res) => {
 
     if (description !== undefined) schedule.description = description;
     if (auditType !== undefined) {
-      schedule.auditType = auditType;
+      const newAuditTypeCode = AUDIT_TYPE_CODES[auditType.toLowerCase()];
+      const oldAuditTypeCode =
+        AUDIT_TYPE_CODES[(schedule.auditType ?? "").toLowerCase()];
 
-      const { auditCode: updatedAuditCode, error: auditCodeError } =
-        await generateAuditCode(auditType);
-      if (auditCodeError) {
-        return res.status(400).json({ message: auditCodeError });
+      if (newAuditTypeCode !== oldAuditTypeCode) {
+        // Type is actually changing — generate a fresh code for the new type
+        // and release the old code if it was the latest of its kind.
+        const oldAuditCode = schedule.auditCode;
+
+        const { auditCode: updatedAuditCode, error: auditCodeError } =
+          await generateAuditCode(auditType);
+        if (auditCodeError) {
+          return res.status(400).json({ message: auditCodeError });
+        }
+
+        schedule.auditType = auditType;
+        schedule.auditCode = updatedAuditCode;
+
+        await releaseAuditCode(oldAuditCode);
+      } else {
+        // Same type — just normalize the stored value, keep the existing code.
+        schedule.auditType = auditType;
       }
-
-      schedule.auditCode = updatedAuditCode;
     } else if (auditCode !== undefined) {
       schedule.auditCode = auditCode;
     }
