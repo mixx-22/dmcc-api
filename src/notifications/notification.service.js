@@ -585,7 +585,7 @@ export const notifyFindingVerified = async (
  * Compare old and new visits **by position** (visit index × finding index)
  * to distinguish between:
  *  - newFindings   — findings appended at indices that did not exist before
- *  - actionPlans   — NC findings whose `corrected` changed 0 → 1
+ *  - actionPlans   — NC findings whose `actionPlan.takenBy` changed from empty to non-empty
  *  - verifications  — NC findings whose `corrected` changed 1 → 2
  *
  * Position-based comparison avoids the JSON.stringify pitfall where a
@@ -615,20 +615,22 @@ export const diffVisitChanges = (oldVisits, newVisits) => {
         continue;
       }
 
-      // Existing finding — check corrected transitions for NC findings
+      // Existing finding — check transitions for NC findings
       const oldF = oldFindings[fi];
       const isNC =
         newF.compliance === "MAJOR_NC" || newF.compliance === "MINOR_NC";
       if (!isNC) continue;
 
-      const oldCorrected = oldF.corrected ?? 0;
-      const newCorrected = newF.corrected ?? 0;
-
-      // Action plan submitted (corrected 0 → 1)
-      if (oldCorrected === 0 && newCorrected === 1) {
+      // Action plan submitted — actionPlan.takenBy changed from empty to non-empty
+      const oldTakenBy = oldF?.actionPlan?.takenBy;
+      const newTakenBy = newF?.actionPlan?.takenBy;
+      if (!oldTakenBy && newTakenBy) {
         result.actionPlans.push(newF);
       }
+
       // Auditor verified the action plan (corrected 1 → 2)
+      const oldCorrected = oldF.corrected ?? 0;
+      const newCorrected = newF.corrected ?? 0;
       if (oldCorrected === 1 && newCorrected === 2) {
         result.verifications.push(newF);
       }
