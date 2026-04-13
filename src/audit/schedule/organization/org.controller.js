@@ -606,11 +606,11 @@ const deleteOrganization = async (req, res) => {
     const actorName =
       `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
       "System";
-    const teamDoc = await Team.findById(org.team).select("name").lean();
+    const [teamDoc, scheduleDoc] = await Promise.all([
+      Team.findById(org.team).select("name").lean(),
+      Schedule.findById(org.auditScheduleId).select("title").lean(),
+    ]);
     const teamName = teamDoc?.name || "Unknown Team";
-    const scheduleDoc = await Schedule.findById(org.auditScheduleId)
-      .select("title")
-      .lean();
     const scheduleName = scheduleDoc?.title || "Audit Schedule";
     notifyOrganizationDeleted(org, teamName, scheduleName, actorId, actorName);
 
