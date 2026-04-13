@@ -507,15 +507,20 @@ export const notifyActionPlanSubmitted = async (
   actorName,
 ) => {
   try {
-    const auditorIds = extractAuditorIds(org.auditors);
-    if (auditorIds.length > 0) {
+    // Notify all auditors by role type so that every auditor is informed,
+    // including cases where the actor is the only auditor assigned to the org.
+    const roleAuditorIds = await getUsersByRoleType("auditor");
+    const orgAuditorIds = extractAuditorIds(org.auditors);
+    const allAuditorIds = [...new Set([...roleAuditorIds, ...orgAuditorIds])];
+
+    if (allAuditorIds.length > 0) {
       const count = findings.length;
       const labels = findings.map((f) =>
         f.compliance === "MAJOR_NC" ? "Major NC" : "Minor NC",
       );
       const unique = [...new Set(labels)].join(" & ");
       await createAndBroadcast(
-        auditorIds,
+        allAuditorIds,
         {
           type: "ACTION_PLAN_SUBMITTED",
           title: "Action Plan Submitted",
