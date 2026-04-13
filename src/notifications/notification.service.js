@@ -642,7 +642,7 @@ export const diffVisitChanges = (oldVisits, newVisits) => {
       const newCorrectionDate = newF.correctionDate ?? null;
       if (
         (oldCorrected === 1 && newCorrected === 2) ||
-        (!oldCorrectionDate && newCorrectionDate)
+        (oldCorrectionDate == null && newCorrectionDate != null)
       ) {
         result.verifications.push(newF);
       }
