@@ -507,15 +507,20 @@ export const notifyActionPlanSubmitted = async (
   actorName,
 ) => {
   try {
-    const auditorIds = extractAuditorIds(org.auditors);
-    if (auditorIds.length > 0) {
+    // Notify all auditors by role type so that every auditor is informed,
+    // including cases where the actor is the only auditor assigned to the org.
+    const roleAuditorIds = await getUsersByRoleType("auditor");
+    const orgAuditorIds = extractAuditorIds(org.auditors);
+    const allAuditorIds = [...new Set([...roleAuditorIds, ...orgAuditorIds])];
+
+    if (allAuditorIds.length > 0) {
       const count = findings.length;
       const labels = findings.map((f) =>
         f.compliance === "MAJOR_NC" ? "Major NC" : "Minor NC",
       );
       const unique = [...new Set(labels)].join(" & ");
       await createAndBroadcast(
-        auditorIds,
+        allAuditorIds,
         {
           type: "ACTION_PLAN_SUBMITTED",
           title: "Action Plan Submitted",
@@ -585,7 +590,7 @@ export const notifyFindingVerified = async (
  * Compare old and new visits **by position** (visit index × finding index)
  * to distinguish between:
  *  - newFindings   — findings appended at indices that did not exist before
- *  - actionPlans   — NC findings whose `corrected` changed 0 → 1
+ *  - actionPlans   — NC findings whose `actionPlan.takenBy` changed from empty to non-empty
  *  - verifications  — NC findings whose `corrected` changed 1 → 2
  *
  * Position-based comparison avoids the JSON.stringify pitfall where a
@@ -615,21 +620,30 @@ export const diffVisitChanges = (oldVisits, newVisits) => {
         continue;
       }
 
-      // Existing finding — check corrected transitions for NC findings
+      // Existing finding — check transitions for NC findings
       const oldF = oldFindings[fi];
       const isNC =
         newF.compliance === "MAJOR_NC" || newF.compliance === "MINOR_NC";
       if (!isNC) continue;
 
-      const oldCorrected = oldF.corrected ?? 0;
-      const newCorrected = newF.corrected ?? 0;
-
-      // Action plan submitted (corrected 0 → 1)
-      if (oldCorrected === 0 && newCorrected === 1) {
+      // Action plan submitted — actionPlan.takenBy changed from empty to non-empty
+      const oldTakenBy = oldF?.actionPlan?.takenBy;
+      const newTakenBy = newF?.actionPlan?.takenBy;
+      if (!oldTakenBy && newTakenBy) {
         result.actionPlans.push(newF);
       }
-      // Auditor verified the action plan (corrected 1 → 2)
-      if (oldCorrected === 1 && newCorrected === 2) {
+
+      // Auditor verified the action plan:
+      //  - legacy signal: corrected 1 → 2
+      //  - new signal: correctionDate changed from null/falsy to non-null
+      const oldCorrected = oldF.corrected ?? 0;
+      const newCorrected = newF.corrected ?? 0;
+      const oldCorrectionDate = oldF.correctionDate ?? null;
+      const newCorrectionDate = newF.correctionDate ?? null;
+      if (
+        (oldCorrected === 1 && newCorrected === 2) ||
+        (oldCorrectionDate == null && newCorrectionDate != null)
+      ) {
         result.verifications.push(newF);
       }
     }
