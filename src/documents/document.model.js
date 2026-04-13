@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { TeamStat } from "../teams/team-stat/teamStat.model.js";
 
 const documentSchema = new mongoose.Schema(
   {
@@ -107,10 +108,6 @@ documentSchema.post("save", async function () {
   if (this.type !== "file") return;
   const teams = this.privacy?.teams;
   if (!teams || teams.length === 0) return;
-
-  const { TeamStat } = await import(
-    "../teams/team-stat/teamStat.model.js"
-  );
 
   for (const teamId of teams) {
     try {

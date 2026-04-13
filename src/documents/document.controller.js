@@ -241,19 +241,31 @@ const postDocument = async (req, res) => {
     if (type === "file" && assignedTeams.length > 0) {
       const fileSize = Number(finalMetadata.size) || 0;
       if (fileSize > 0) {
-        for (const teamId of assignedTeams) {
-          const team = await Team.findById(teamId).select("storageLimitGB name");
-          if (!team || !team.storageLimitGB) continue; // 0 = unlimited
+        const validTeamIds = assignedTeams.filter((id) =>
+          mongoose.Types.ObjectId.isValid(id),
+        );
+        const [teams, teamStats] = await Promise.all([
+          Team.find({ _id: { $in: validTeamIds } }).select("storageLimitGB name"),
+          TeamStat.find({ teamId: { $in: validTeamIds } }).select(
+            "teamId usedStorageBytes",
+          ),
+        ]);
+        const teamStatMap = Object.fromEntries(
+          teamStats.map((ts) => [ts.teamId.toString(), ts]),
+        );
+
+        for (const team of teams) {
+          if (team.storageLimitGB === 0) continue; // 0 = unlimited
 
           const storageLimitBytes = team.storageLimitGB * 1024 * 1024 * 1024;
-          const teamStat = await TeamStat.findOne({ teamId });
-          const usedBytes = teamStat?.usedStorageBytes || 0;
+          const usedBytes =
+            teamStatMap[team._id.toString()]?.usedStorageBytes || 0;
 
           if (usedBytes + fileSize > storageLimitBytes) {
             return res.status(413).json({
               success: false,
               message: `Storage limit exceeded for team '${team.name}'. Limit: ${team.storageLimitGB} GB, Used: ${(usedBytes / (1024 * 1024 * 1024)).toFixed(3)} GB, File size: ${(fileSize / (1024 * 1024)).toFixed(2)} MB.`,
-              teamId: teamId.toString(),
+              teamId: team._id.toString(),
               storageLimitGB: team.storageLimitGB,
               usedBytes,
               fileSize,
@@ -1323,28 +1335,37 @@ const updateDocument = async (req, res) => {
     // Enforce storage limits when assigning a file document to new teams
     if (privacy !== undefined && document.type === "file") {
       const newTeamIds = (privacy.teams || []).map((id) => id.toString());
-      const teamsBeingAdded = newTeamIds.filter(
-        (teamId) => !oldTeamIds.includes(teamId),
-      );
+      const teamsBeingAdded = newTeamIds
+        .filter((teamId) => !oldTeamIds.includes(teamId))
+        .filter((id) => mongoose.Types.ObjectId.isValid(id));
 
       if (teamsBeingAdded.length > 0) {
         const fileSize = Number(document.metadata?.size) || 0;
         if (fileSize > 0) {
-          for (const teamId of teamsBeingAdded) {
-            const team = await Team.findById(teamId).select(
+          const [teams, teamStats] = await Promise.all([
+            Team.find({ _id: { $in: teamsBeingAdded } }).select(
               "storageLimitGB name",
-            );
-            if (!team || !team.storageLimitGB) continue; // 0 = unlimited
+            ),
+            TeamStat.find({ teamId: { $in: teamsBeingAdded } }).select(
+              "teamId usedStorageBytes",
+            ),
+          ]);
+          const teamStatMap = Object.fromEntries(
+            teamStats.map((ts) => [ts.teamId.toString(), ts]),
+          );
+
+          for (const team of teams) {
+            if (team.storageLimitGB === 0) continue; // 0 = unlimited
 
             const storageLimitBytes = team.storageLimitGB * 1024 * 1024 * 1024;
-            const teamStat = await TeamStat.findOne({ teamId });
-            const usedBytes = teamStat?.usedStorageBytes || 0;
+            const usedBytes =
+              teamStatMap[team._id.toString()]?.usedStorageBytes || 0;
 
             if (usedBytes + fileSize > storageLimitBytes) {
               return res.status(413).json({
                 success: false,
                 message: `Storage limit exceeded for team '${team.name}'. Limit: ${team.storageLimitGB} GB, Used: ${(usedBytes / (1024 * 1024 * 1024)).toFixed(3)} GB, File size: ${(fileSize / (1024 * 1024)).toFixed(2)} MB.`,
-                teamId: teamId.toString(),
+                teamId: team._id.toString(),
                 storageLimitGB: team.storageLimitGB,
                 usedBytes,
                 fileSize,
