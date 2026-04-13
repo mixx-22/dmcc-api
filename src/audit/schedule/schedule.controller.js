@@ -18,6 +18,10 @@ const AUDIT_TYPE_CODES = {
   operational: "OPR",
 };
 
+const AUDIT_STATUS_CLOSED = 1;
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
  * Atomically increments the per-type-per-year counter and returns the
  * next audit code.  Using findOneAndUpdate + $inc ensures no two
@@ -105,8 +109,11 @@ const postSchedule = async (req, res) => {
       return res.status(400).json({ message: "Title is required." });
     }
 
-    // Check if there's an ongoing audit (status = 0) before reserving a code
+    // Check if there's an ongoing audit of the SAME type (status = 0).
+    // Audits of different types may run simultaneously.
+    const auditTypeValue = (auditType ?? "").toString().trim();
     const ongoingAudit = await Schedule.findOne({
+      auditType: new RegExp(`^${escapeRegExp(auditTypeValue)}$`, "i"),
       status: 0,
       deletedAt: null,
     });
@@ -318,10 +325,17 @@ const putSchedule = async (req, res) => {
     }
 
     if (description !== undefined) schedule.description = description;
-    if (auditType !== undefined) {
-      const newAuditTypeCode = AUDIT_TYPE_CODES[auditType.toLowerCase()];
+
+    // Never regenerate the audit code for a closed audit, and never allow a
+    // manual override of auditCode on a closed audit.  The audit code is
+    // permanent once an audit reaches status 1.
+    const auditIsClosed = schedule.status === AUDIT_STATUS_CLOSED;
+
+    if (!auditIsClosed && auditType !== undefined) {
+      const newAuditTypeCode =
+        AUDIT_TYPE_CODES[(auditType ?? "").toString().toLowerCase()];
       const oldAuditTypeCode =
-        AUDIT_TYPE_CODES[(schedule.auditType ?? "").toLowerCase()];
+        AUDIT_TYPE_CODES[(schedule.auditType ?? "").toString().toLowerCase()];
 
       if (newAuditTypeCode !== oldAuditTypeCode) {
         // Type is actually changing — generate a fresh code for the new type
@@ -342,7 +356,7 @@ const putSchedule = async (req, res) => {
         // Same type — just normalize the stored value, keep the existing code.
         schedule.auditType = auditType;
       }
-    } else if (auditCode !== undefined) {
+    } else if (!auditIsClosed && auditCode !== undefined) {
       schedule.auditCode = auditCode;
     }
     if (standard !== undefined) {
@@ -368,7 +382,7 @@ const putSchedule = async (req, res) => {
     const actorName =
       `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
       "System";
-    if (status !== undefined && status === 1 && oldStatus !== 1) {
+    if (status !== undefined && status === AUDIT_STATUS_CLOSED && oldStatus !== AUDIT_STATUS_CLOSED) {
       notifyScheduleClosed(saved, actorId, actorName);
     } else {
       notifyScheduleUpdated(saved, actorId, actorName);
