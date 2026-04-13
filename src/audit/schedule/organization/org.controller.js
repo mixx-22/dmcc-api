@@ -606,7 +606,13 @@ const deleteOrganization = async (req, res) => {
     const actorName =
       `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
       "System";
-    notifyOrganizationDeleted(org, actorId, actorName);
+    const teamDoc = await Team.findById(org.team).select("name").lean();
+    const teamName = teamDoc?.name || "Unknown Team";
+    const scheduleDoc = await Schedule.findById(org.auditScheduleId)
+      .select("title")
+      .lean();
+    const scheduleName = scheduleDoc?.title || "Audit Schedule";
+    notifyOrganizationDeleted(org, teamName, scheduleName, actorId, actorName);
 
     return res.status(200).json({
       success: true,
