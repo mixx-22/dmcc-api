@@ -49,6 +49,12 @@ const teamSchema = new Schema(
       ref: "User",
     },
 
+    storageLimitGB: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     deletedAt: {
       type: Date,
       default: null,

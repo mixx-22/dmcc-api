@@ -1,5 +1,45 @@
 import { TeamStat } from "./teamStat.model.js";
 import { Team } from "../team.model.js";
+import mongoose from "mongoose";
+
+// Recalculates the total storage used by a team by summing metadata.size
+// of all non-deleted file documents assigned to the team.
+const recalculateTeamStorage = async (teamId) => {
+  try {
+    const Document = mongoose.model("Document");
+    const result = await Document.aggregate([
+      {
+        $match: {
+          type: "file",
+          "privacy.teams": new mongoose.Types.ObjectId(teamId.toString()),
+          deletedAt: null,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalSize: { $sum: { $ifNull: ["$metadata.size", 0] } },
+        },
+      },
+    ]);
+
+    const usedStorageBytes = result[0]?.totalSize || 0;
+
+    await TeamStat.findOneAndUpdate(
+      { teamId },
+      { $set: { usedStorageBytes } },
+      { upsert: false },
+    );
+
+    return usedStorageBytes;
+  } catch (error) {
+    console.error(
+      `[recalculateTeamStorage] Error for team ${teamId}:`,
+      error,
+    );
+    throw error;
+  }
+};
 
 const postTeamStat = async (req, res) => {
   try {
@@ -134,6 +174,10 @@ const putFileTeamStat = async (teamId, documentId) => {
 
     await teamStat.save();
     console.log(`Document ${documentId} added to team stat for team ${teamId}`);
+
+    // Recalculate storage usage for the team
+    await recalculateTeamStorage(teamId);
+
     return teamStat;
   } catch (error) {
     console.error("Error updating team stat with file:", error);
@@ -168,6 +212,9 @@ const removeFileTeamStat = async (teamId, documentId) => {
         `Document ${documentId} removed from team stat for team ${teamId}`,
       );
     }
+
+    // Recalculate storage usage for the team
+    await recalculateTeamStorage(teamId);
 
     return teamStat;
   } catch (error) {
@@ -265,15 +312,35 @@ const getTeamStats = async (req, res) => {
       });
     }
 
+    // Fetch storage limit from the team
+    const team = await Team.findById(id).select("storageLimitGB");
+    const storageLimitGB = team?.storageLimitGB ?? 0;
+    const storageLimitBytes = storageLimitGB * 1024 * 1024 * 1024;
+
     // Count files and pending
     const totalFiles = teamStat.files ? teamStat.files.length : 0;
     const totalPending = teamStat.pending ? teamStat.pending.length : 0;
+    const usedStorageBytes = teamStat.usedStorageBytes || 0;
+    const remainingStorageBytes =
+      storageLimitGB > 0
+        ? Math.max(0, storageLimitBytes - usedStorageBytes)
+        : null;
 
     return res.status(200).json({
       success: true,
       data: {
         total: totalFiles,
         pending: totalPending,
+        storage: {
+          limitGB: storageLimitGB,
+          usedBytes: usedStorageBytes,
+          usedGB: usedStorageBytes / (1024 * 1024 * 1024),
+          remainingBytes: remainingStorageBytes,
+          remainingGB:
+            remainingStorageBytes !== null
+              ? remainingStorageBytes / (1024 * 1024 * 1024)
+              : null,
+        },
       },
     });
   } catch (error) {
@@ -291,6 +358,7 @@ export {
   createTeamStat,
   putFileTeamStat,
   removeFileTeamStat,
+  recalculateTeamStorage,
   getAllTeamStats,
   getTeamStats,
 };

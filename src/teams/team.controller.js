@@ -249,6 +249,7 @@ const updateTeam = async (req, res) => {
       objectives,
       folderId,
       folderTitle,
+      storageLimitGB,
       createdBy: createdByBody,
       createdby,
       ...other
@@ -341,6 +342,16 @@ const updateTeam = async (req, res) => {
 
     if (folderTitle !== undefined) existingTeam.folderTitle = folderTitle;
 
+    if (storageLimitGB !== undefined) {
+      const limit = Number(storageLimitGB);
+      if (isNaN(limit) || limit < 0) {
+        return res
+          .status(400)
+          .json({ message: "storageLimitGB must be a non-negative number." });
+      }
+      existingTeam.storageLimitGB = limit;
+    }
+
     // Note: createdBy should not be updated after team creation
     // It represents the original creator and should remain immutable
 
@@ -358,6 +369,7 @@ const updateTeam = async (req, res) => {
     if (Array.isArray(objectives)) changes.objectives = { changed: true };
     if (folderId !== undefined) changes.folderId = folderId;
     if (folderTitle !== undefined) changes.folderTitle = folderTitle;
+    if (storageLimitGB !== undefined) changes.storageLimitGB = storageLimitGB;
 
     await postAuditTrailLog(
       "U",

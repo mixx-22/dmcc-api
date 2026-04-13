@@ -102,5 +102,49 @@ documentSchema.index({ status: 1 });
 documentSchema.index({ parentId: 1 });
 documentSchema.index({ owner: 1 });
 
+// Observer: recalculate team storage after every file document save
+documentSchema.post("save", async function () {
+  if (this.type !== "file") return;
+  const teams = this.privacy?.teams;
+  if (!teams || teams.length === 0) return;
+
+  const { TeamStat } = await import(
+    "../teams/team-stat/teamStat.model.js"
+  );
+
+  for (const teamId of teams) {
+    try {
+      const result = await this.constructor.aggregate([
+        {
+          $match: {
+            type: "file",
+            "privacy.teams": teamId,
+            deletedAt: null,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalSize: { $sum: { $ifNull: ["$metadata.size", 0] } },
+          },
+        },
+      ]);
+
+      const usedStorageBytes = result[0]?.totalSize || 0;
+
+      await TeamStat.findOneAndUpdate(
+        { teamId },
+        { $set: { usedStorageBytes } },
+        { upsert: false },
+      );
+    } catch (err) {
+      console.error(
+        `[Document observer] Error recalculating storage for team ${teamId}:`,
+        err,
+      );
+    }
+  }
+});
+
 export const Document =
   mongoose.models.Document || mongoose.model("Document", documentSchema);

@@ -17,6 +17,11 @@ const teamStatSchema = new Schema(
       type: [String],
       default: [],
     },
+
+    usedStorageBytes: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
