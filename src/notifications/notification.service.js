@@ -369,6 +369,7 @@ export const notifyAuditorAssigned = async (
   userIds,
   orgTeamName,
   scheduleName,
+  auditScheduleId,
   actorId,
   actorName,
 ) => {
@@ -380,7 +381,7 @@ export const notifyAuditorAssigned = async (
         type: "AUDITOR_ASSIGNED",
         title: "Assigned as Auditor",
         message: `${actorName} assigned you as auditor for "${orgTeamName}" in "${scheduleName}".`,
-        data: { teamName: orgTeamName },
+        data: { teamName: orgTeamName, scheduleId: auditScheduleId },
       },
       actorId,
     );
