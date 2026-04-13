@@ -436,6 +436,13 @@ const putOrganization = async (req, res) => {
       verdict,
     } = req.body;
 
+    // Detect visits-only payload: frontend sends only `visits` when an auditor
+    // submits or updates an action plan. Recognizing this specific action is
+    // important because the same endpoint is used for other updates (auditor
+    // assignment, verdict, etc.) whose payloads differ.
+    const isActionPlanUpdate =
+      Object.keys(req.body).length === 1 && visits !== undefined;
+
     if (auditScheduleId !== undefined) org.auditScheduleId = auditScheduleId;
     if (team !== undefined) {
       // Extract team ID if team is an object, otherwise use it directly
@@ -525,7 +532,9 @@ const putOrganization = async (req, res) => {
     if (visits !== undefined) {
       const changes = diffVisitChanges(oldVisits, visits);
 
-      if (changes.newFindings.length > 0) {
+      // New findings are not expected in an action-plan-only update, but
+      // guard here so any generic visit update still notifies correctly.
+      if (changes.newFindings.length > 0 && !isActionPlanUpdate) {
         notifyFindingAdded(
           saved,
           teamName,
@@ -536,7 +545,11 @@ const putOrganization = async (req, res) => {
         );
       }
 
-      // Action plan submitted (corrected 0 → 1) — notify auditors
+      // Action plan submitted / updated (corrected 0 → 1).
+      // This is the primary notification for the visits-only payload: all
+      // auditors (by role type as well as those assigned to the org) are
+      // notified so that no auditor is missed when the actor is the only
+      // one assigned to this org.
       if (changes.actionPlans.length > 0) {
         notifyActionPlanSubmitted(
           saved,
