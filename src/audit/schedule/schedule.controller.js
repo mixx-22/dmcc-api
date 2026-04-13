@@ -338,6 +338,25 @@ const putSchedule = async (req, res) => {
         AUDIT_TYPE_CODES[(schedule.auditType ?? "").toString().toLowerCase()];
 
       if (newAuditTypeCode !== oldAuditTypeCode) {
+        // Block the type change if there is already an ongoing audit of the new type.
+        const newAuditTypeValue = auditType.toString().trim();
+        const conflictingAudit = await Schedule.findOne({
+          auditType: new RegExp(`^${escapeRegExp(newAuditTypeValue)}$`, "i"),
+          status: 0,
+          deletedAt: null,
+          _id: { $ne: schedule._id },
+        });
+        if (conflictingAudit) {
+          return res.status(400).json({
+            message:
+              "There's an ongoing audit of the new type. Cannot change the audit type.",
+            ongoingSchedule: {
+              id: conflictingAudit._id,
+              title: conflictingAudit.title,
+            },
+          });
+        }
+
         // Type is actually changing — generate a fresh code for the new type
         // and release the old code if it was the latest of its kind.
         const oldAuditCode = schedule.auditCode;
