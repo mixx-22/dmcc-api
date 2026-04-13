@@ -107,11 +107,12 @@ const postSchedule = async (req, res) => {
 
     const newSchedule = await Schedule.create(scheduleData);
 
-    // Notify admins about the new schedule
+    // Notify admins about the new schedule — awaited so the schedule _id is
+    // persisted and accessible before the notification is dispatched.
     const actorName =
       `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
       "System";
-    notifyScheduleCreated(newSchedule, userId, actorName);
+    await notifyScheduleCreated(newSchedule, userId, actorName);
 
     res.status(201).json({
       message: "Schedule created successfully.",
