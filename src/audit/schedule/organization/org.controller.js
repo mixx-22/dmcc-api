@@ -88,6 +88,7 @@ const postOrganization = async (req, res) => {
           auditorIds,
           teamName,
           scheduleName,
+          auditScheduleId,
           actorId,
           actorName,
         );
