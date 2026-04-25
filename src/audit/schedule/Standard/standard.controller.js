@@ -40,7 +40,12 @@ const getAllStandard = async (req, res) => {
     let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
     if (limit > maxLimit) limit = maxLimit;
 
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
     const filter = { deletedAt: null };
+    if (keyword) {
+      const re = new RegExp(keyword, "i");
+      filter.$or = [{ standard: re }, { description: re }];
+    }
 
     const total = await Standard.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
