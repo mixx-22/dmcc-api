@@ -331,7 +331,23 @@ export const getLatestAuditKpis = async (req, res) => {
           },
           closedFindings: {
             $sum: {
-              $cond: [{ $eq: ["$visits.findings.corrected", 1] }, 1, 0],
+              $cond: [
+                {
+                  $and: [
+                    {
+                      $in: [
+                        "$visits.findings.compliance",
+                        ["MAJOR_NC", "MINOR_NC"],
+                      ],
+                    },
+                    {
+                      $in: ["$visits.findings.corrected", [2, "2"]],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
             },
           },
           allFindings: { $push: "$visits.findings" },
@@ -403,9 +419,7 @@ export const getLatestAuditKpis = async (req, res) => {
       totalFindings > 0 ? ((totalNC / totalFindings) * 100).toFixed(2) : 0;
 
     const correctiveActionClosureRate =
-      totalFindings > 0
-        ? ((closedFindings / totalFindings) * 100).toFixed(2)
-        : 0;
+      totalNC > 0 ? ((closedFindings / totalNC) * 100).toFixed(2) : 0;
 
     // Findings per clause (objective)
     const clauseMap = {};

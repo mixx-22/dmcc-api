@@ -165,6 +165,32 @@ export const calculateAuditKpis = async (auditScheduleId) => {
               ],
             },
           },
+          compliant: {
+            $sum: {
+              $cond: [
+                { $eq: ["$visits.findings.compliance", "COMPLIANT"] },
+                1,
+                0,
+              ],
+            },
+          },
+          opportunitiesForImprovement: {
+            $sum: {
+              $cond: [
+                {
+                  $in: [
+                    "$visits.findings.compliance",
+                    [
+                      "OPPORTUNITIES_FOR_IMPROVEMENT",
+                      "OPPORTUNITIES_FOR_IMPROVEMENTS",
+                    ],
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
           closedFindings: {
             $sum: {
               $cond: [
@@ -176,7 +202,9 @@ export const calculateAuditKpis = async (auditScheduleId) => {
                         ["MAJOR_NC", "MINOR_NC"],
                       ],
                     },
-                    { $eq: ["$visits.findings.corrected", 2] },
+                    {
+                      $in: ["$visits.findings.corrected", [2, "2"]],
+                    },
                   ],
                 },
                 1,
@@ -200,6 +228,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
     let majorNC = 0;
     let minorNC = 0;
     let observations = 0;
+    let compliant = 0;
+    let opportunitiesForImprovement = 0;
     let closedFindings = 0;
     let allFindings = [];
 
@@ -209,6 +239,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       majorNC = result.majorNC || 0;
       minorNC = result.minorNC || 0;
       observations = result.observations || 0;
+      compliant = result.compliant || 0;
+      opportunitiesForImprovement = result.opportunitiesForImprovement || 0;
       closedFindings = result.closedFindings || 0;
       allFindings = result.allFindings || [];
     }
@@ -228,6 +260,8 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       major: majorNC,
       minor: minorNC,
       observations: observations,
+      compliant: compliant,
+      opportunitiesForImprovement: opportunitiesForImprovement,
     };
 
     // 4. Corrective Action Closure Rate (%)
@@ -697,7 +731,7 @@ export const calculateSystemWideKpis = async () => {
     const closedFindingsSystem = allFindings.filter(
       (f) =>
         (f.compliance === "MAJOR_NC" || f.compliance === "MINOR_NC") &&
-        f.corrected === 2,
+        Number(f.corrected) === 2,
     ).length;
 
     return {
