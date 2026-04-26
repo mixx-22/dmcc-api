@@ -191,6 +191,9 @@ export const calculateAuditKpis = async (auditScheduleId) => {
               ],
             },
           },
+          // Closed Findings = NC findings (MAJOR or MINOR) with a verified action plan
+          // corrected state machine: 0=pending action plan, 1=action plan submitted, 2=verified/closed by auditor
+          // Check if actionPlans array contains at least one plan with corrected=2
           closedFindings: {
             $sum: {
               $cond: [
@@ -203,7 +206,20 @@ export const calculateAuditKpis = async (auditScheduleId) => {
                       ],
                     },
                     {
-                      $in: ["$visits.findings.corrected", [2, "2"]],
+                      $gt: [
+                        {
+                          $size: {
+                            $filter: {
+                              input: {
+                                $ifNull: ["$visits.findings.actionPlans", []],
+                              },
+                              as: "ap",
+                              cond: { $eq: ["$$ap.corrected", 2] },
+                            },
+                          },
+                        },
+                        0,
+                      ],
                     },
                   ],
                 },
@@ -222,6 +238,98 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       "[KPI] Findings aggregation complete. Results:",
       findingsAggregation.length,
     );
+
+    // DIAGNOSTIC: Get detailed breakdown of corrected field values for NC findings
+    // including checking actionPlans nested array
+    const correctedBreakdown = await Org.aggregate([
+      {
+        $match: {
+          auditScheduleId: scheduleObjectId,
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $unwind: {
+          path: "$visits.findings",
+          preserveNullAndEmptyArrays: false,
+        },
+      },
+      {
+        $match: {
+          "visits.findings.compliance": { $in: ["MAJOR_NC", "MINOR_NC"] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          correctedValues: {
+            $push: "$visits.findings.corrected",
+          },
+          hasActionPlans: {
+            $sum: {
+              $cond: [
+                {
+                  $gt: [
+                    {
+                      $size: {
+                        $ifNull: ["$visits.findings.actionPlans", []],
+                      },
+                    },
+                    0,
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          closedFromActionPlans: {
+            $sum: {
+              $cond: [
+                {
+                  $gt: [
+                    {
+                      $size: {
+                        $filter: {
+                          input: {
+                            $ifNull: ["$visits.findings.actionPlans", []],
+                          },
+                          as: "ap",
+                          cond: { $eq: ["$$ap.corrected", 2] },
+                        },
+                      },
+                    },
+                    0,
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    console.log("[KPI] DIAGNOSTIC - NC Findings corrected field breakdown:");
+    if (correctedBreakdown.length > 0) {
+      const data = correctedBreakdown[0];
+      console.log(
+        `[KPI] DIAGNOSTIC - Top-level corrected values:`,
+        data.correctedValues,
+      );
+      console.log(
+        `[KPI] DIAGNOSTIC - Findings with actionPlans: ${data.hasActionPlans}`,
+      );
+      console.log(
+        `[KPI] DIAGNOSTIC - Findings with actionPlans.corrected=2: ${data.closedFromActionPlans}`,
+      );
+    }
 
     // Default values if no findings exist
     let totalFindings = 0;
@@ -243,6 +351,34 @@ export const calculateAuditKpis = async (auditScheduleId) => {
       opportunitiesForImprovement = result.opportunitiesForImprovement || 0;
       closedFindings = result.closedFindings || 0;
       allFindings = result.allFindings || [];
+    }
+    console.log("[KPI] Findings aggregation result:", findingsAggregation);
+
+    // DEBUG: Log corrected field values for NC findings
+    if (allFindings.length > 0) {
+      console.log("[KPI] DEBUG - Checking corrected field values:");
+      const ncFindings = allFindings.filter((f) =>
+        ["MAJOR_NC", "MINOR_NC"].includes(f.compliance),
+      );
+      console.log(`[KPI] DEBUG - Found ${ncFindings.length} NC findings`);
+      const correctedCounts = {};
+      ncFindings.forEach((finding, idx) => {
+        const corrVal = finding.corrected ?? 0;
+        correctedCounts[corrVal] = (correctedCounts[corrVal] || 0) + 1;
+        if (idx < 3) {
+          // Log first 3 for detail
+          console.log(
+            `[KPI] DEBUG - NC Finding ${idx}: compliance="${finding.compliance}", corrected=${corrVal} (type: ${typeof finding.corrected})`,
+          );
+        }
+      });
+      console.log(
+        "[KPI] DEBUG - Corrected status distribution:",
+        correctedCounts,
+      );
+      console.log(
+        "[KPI] DEBUG - Expected: closedFindings should only include count where corrected=2",
+      );
     }
 
     // 1. Total Findings (all findings)

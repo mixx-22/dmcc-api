@@ -168,31 +168,40 @@ const postSchedule = async (req, res) => {
 
 const getAllSchedule = async (req, res) => {
   try {
-    // pagination
+    // Pagination
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const maxLimit = 100;
     let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
     if (limit > maxLimit) limit = maxLimit;
 
-    // keyword search (title OR description)
-    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
     const filter = { deletedAt: null };
+
+    // 🔍 Keyword search (TEXT ONLY)
+    const keyword = (req.query.keyword ?? req.query.q ?? "").toString().trim();
+
     if (keyword) {
       const re = new RegExp(keyword, "i");
+
       filter.$or = [
         { title: re },
         { description: re },
         { auditCode: re },
         { auditType: re },
-        { status: re },
       ];
     }
 
-    // Year filtering
+    // ✅ Status filter (STRUCTURED - no conflict with keyword)
+    if (req.query.status !== undefined) {
+      const status = parseInt(req.query.status, 10);
+      if (!isNaN(status)) {
+        filter.status = status;
+      }
+    }
+
+    // 📅 Year filter
     if (req.query.year) {
       const year = parseInt(req.query.year, 10);
       if (!isNaN(year)) {
-        // Filter schedules where date.start year matches
         filter["date.start"] = {
           $gte: new Date(`${year}-01-01T00:00:00.000Z`),
           $lt: new Date(`${year + 1}-01-01T00:00:00.000Z`),
@@ -200,18 +209,20 @@ const getAllSchedule = async (req, res) => {
       }
     }
 
+    // 📊 Count
     const total = await Schedule.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
 
+    // 📦 Data fetch
     const data = await Schedule.find(filter)
       .populate({
         path: "owner",
         select:
           "fullname fullName name firstName lastName middleName employeeId",
       })
+      .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
-      .limit(limit)
-      .sort({ createdAt: -1 });
+      .limit(limit);
 
     return res.status(200).json({
       success: true,
