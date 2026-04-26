@@ -184,6 +184,7 @@ const getAllSchedule = async (req, res) => {
         { description: re },
         { auditCode: re },
         { auditType: re },
+        { status: re },
       ];
     }
 
@@ -402,7 +403,11 @@ const putSchedule = async (req, res) => {
     const actorName =
       `${req.user?.firstName || ""} ${req.user?.lastName || ""}`.trim() ||
       "System";
-    if (status !== undefined && status === AUDIT_STATUS_CLOSED && oldStatus !== AUDIT_STATUS_CLOSED) {
+    if (
+      status !== undefined &&
+      status === AUDIT_STATUS_CLOSED &&
+      oldStatus !== AUDIT_STATUS_CLOSED
+    ) {
       notifyScheduleClosed(saved, actorId, actorName);
     } else {
       notifyScheduleUpdated(saved, actorId, actorName);
