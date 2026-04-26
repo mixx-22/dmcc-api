@@ -94,41 +94,62 @@ const postRecentDocsLog = async (req, res) => {
   }
 };
 
+const buildAccessFilter = (user) => {
+  if (!user) return { _id: null };
+
+  const userId = user._id;
+
+  const userTeamIds = (user.team || []).map((t) => t.id || t._id);
+  const userRoleIds = (user.role || []).map((r) => r.id || r._id);
+
+  return {
+    $or: [
+      // PUBLIC
+      { "permissionOverrides.restricted": 0 },
+
+      // RESTRICTED WITH ACCESS RULES
+      {
+        $and: [
+          { "permissionOverrides.restricted": 1 },
+          {
+            $or: [
+              { owner: userId },
+              { "privacy.users": userId },
+              { "privacy.teams": { $in: userTeamIds } },
+              { "privacy.roles": { $in: userRoleIds } },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+};
+
 const getRecentDocsLog = async (req, res) => {
   try {
     const { user, type } = req.query;
 
-    // Pagination
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const maxLimit = 100;
-    let limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
-    if (limit > maxLimit) limit = maxLimit;
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit, 10) || 10, 1),
+      100,
+    );
 
-    // Build filter
-    const filter = {};
+    const filter = {
+      ...(user && { userId: user }),
+      ...(type && { documentType: type }),
+    };
 
-    // Filter by user if provided
-    if (user) {
-      filter.userId = user;
-    }
-
-    // Filter by document type if provided
-    if (type) {
-      filter.documentType = type;
-    }
-
-    // Get total count for pagination
     const total = await RecentDocs.countDocuments(filter);
     const totalPages = Math.ceil(total / limit) || 1;
 
-    // Get recent documents sorted by accessedAt (desc) and count (desc)
     const recentDocs = await RecentDocs.find(filter)
       .sort({ accessedAt: -1, count: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
 
-    if (recentDocs.length === 0) {
+    if (!recentDocs.length) {
       return res.status(200).json({
         success: true,
         message: "No recent documents found",
@@ -137,13 +158,15 @@ const getRecentDocsLog = async (req, res) => {
       });
     }
 
-    // Extract document IDs
-    const documentIds = recentDocs.map((doc) => doc.documentId);
+    const documentIds = recentDocs.map((d) => d.documentId);
 
-    // Fetch full document details
+    // 🔐 APPLY PRIVACY FILTER HERE
+    const accessFilter = buildAccessFilter(req.user);
+
     const documents = await Document.find({
       _id: { $in: documentIds },
       deletedAt: null,
+      $and: [accessFilter],
     })
       .populate("owner", "firstName lastName email")
       .populate("privacy.users", "firstName lastName email")
@@ -151,96 +174,53 @@ const getRecentDocsLog = async (req, res) => {
       .populate("privacy.roles", "title")
       .lean();
 
-    // Create a map of documents by ID for quick lookup
-    const documentsMap = {};
-    documents.forEach((doc) => {
-      documentsMap[doc._id.toString()] = doc;
-    });
+    const documentsMap = Object.fromEntries(
+      documents.map((doc) => [doc._id.toString(), doc]),
+    );
 
-    // Collect unique fileType IDs from file documents
+    // FILE TYPES
     const fileTypeIds = [
       ...new Set(
         documents
-          .filter((doc) => doc.type === "file" && doc.metadata?.fileType)
-          .map((doc) => {
-            const fileType = doc.metadata.fileType;
-            let id;
-
-            // Check if it's already an object with id property
-            if (typeof fileType === "object" && fileType.id) {
-              id = fileType.id.toString();
-            } else {
-              id = fileType.toString();
-            }
-
-            // Validate ObjectId format
-            return mongoose.Types.ObjectId.isValid(id) ? id : null;
-          })
-          .filter((id) => id !== null), // Remove invalid IDs
+          .map((doc) => doc.metadata?.fileType)
+          .filter(Boolean)
+          .map((id) => (mongoose.isValidObjectId(id) ? id.toString() : null))
+          .filter(Boolean),
       ),
     ];
 
-    // Fetch all fileTypes in one query
-    let fileTypesMap = {};
-    if (fileTypeIds.length > 0) {
-      const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
-        .select("_id name")
-        .lean();
+    const fileTypes = fileTypeIds.length
+      ? await FileType.find({ _id: { $in: fileTypeIds } })
+          .select("_id name")
+          .lean()
+      : [];
 
-      fileTypes.forEach((ft) => {
-        fileTypesMap[ft._id.toString()] = ft;
-      });
-    }
+    const fileTypeMap = Object.fromEntries(
+      fileTypes.map((ft) => [ft._id.toString(), ft]),
+    );
 
-    // Combine document data with accessedAt from recentDocs
     const result = recentDocs
-      .map((recentDoc) => {
-        const document = documentsMap[recentDoc.documentId.toString()];
-        if (!document) return null; // Skip if document not found or deleted
+      .map((recent) => {
+        const doc = documentsMap[recent.documentId.toString()];
+        if (!doc) return null;
 
-        // Transform fileType for file documents
-        if (document.type === "file" && document.metadata?.fileType) {
-          const fileType = document.metadata.fileType;
-          let fileTypeId;
+        // Normalize fileType
+        if (doc.type === "file" && doc.metadata?.fileType) {
+          const fileTypeId = doc.metadata.fileType?.toString?.();
 
-          // Check if it's already an object with id property
-          if (typeof fileType === "object" && fileType.id) {
-            fileTypeId = fileType.id.toString();
-          } else {
-            fileTypeId = fileType.toString();
-          }
-
-          // Only transform if it's a valid ObjectId
-          if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
-            const fileTypeData = fileTypesMap[fileTypeId];
-
-            if (fileTypeData) {
-              document.metadata.fileType = {
-                id: fileTypeData._id,
-                name: fileTypeData.name || "",
-              };
-            } else {
-              document.metadata.fileType = {
-                id: fileTypeId,
-                name: "",
-              };
-            }
-          } else {
-            // Invalid ObjectId, set to null
-            document.metadata.fileType = {
-              id: null,
-              name: "",
-            };
-          }
+          doc.metadata.fileType = {
+            id: fileTypeId,
+            name: fileTypeMap[fileTypeId]?.name || "",
+          };
         }
 
         return {
-          ...document,
-          accessedAt: recentDoc.accessedAt,
-          accessCount: recentDoc.count,
+          ...doc,
+          accessedAt: recent.accessedAt,
+          accessCount: recent.count,
         };
       })
-      .filter((doc) => doc !== null); // Remove null entries
+      .filter(Boolean);
 
     return res.status(200).json({
       success: true,
@@ -251,7 +231,6 @@ const getRecentDocsLog = async (req, res) => {
   } catch (error) {
     console.error("Error in getRecentDocsLog:", error);
 
-    // Handle cast errors (invalid ObjectId)
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
@@ -261,8 +240,7 @@ const getRecentDocsLog = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to retrieve recent documents",
-      error: error.message,
+      message: error.message || "Failed to retrieve recent documents",
     });
   }
 };

@@ -369,6 +369,180 @@ const postDocument = async (req, res) => {
   }
 };
 
+const buildDateFilter = (dateRange, startDate, endDate) => {
+  if (!dateRange) return {};
+
+  const startOfDay = (d) => new Date(d.setHours(0, 0, 0, 0));
+  const endOfDay = (d) => new Date(d.setHours(23, 59, 59, 999));
+
+  const now = new Date();
+
+  switch (dateRange) {
+    case "today":
+      return {
+        createdAt: {
+          $gte: startOfDay(new Date()),
+          $lte: endOfDay(new Date()),
+        },
+      };
+
+    case "last7days":
+      return {
+        createdAt: {
+          $gte: startOfDay(new Date(now.setDate(now.getDate() - 7))),
+        },
+      };
+
+    case "last30days":
+      return {
+        createdAt: {
+          $gte: startOfDay(new Date(now.setDate(now.getDate() - 30))),
+        },
+      };
+
+    case "thisYear":
+      return {
+        createdAt: {
+          $gte: new Date(new Date().getFullYear(), 0, 1),
+        },
+      };
+
+    case "lastYear":
+      const y = new Date().getFullYear() - 1;
+      return {
+        createdAt: {
+          $gte: new Date(y, 0, 1),
+          $lte: new Date(y, 11, 31, 23, 59, 59, 999),
+        },
+      };
+
+    case "custom":
+      if (!startDate || !endDate) {
+        throw new Error("startDate and endDate are required");
+      }
+
+      const start = startOfDay(new Date(startDate));
+      const end = endOfDay(new Date(endDate));
+
+      if (isNaN(start) || isNaN(end)) {
+        throw new Error("Invalid date format");
+      }
+
+      if (start > end) {
+        throw new Error("startDate must be <= endDate");
+      }
+
+      return { createdAt: { $gte: start, $lte: end } };
+
+    default:
+      throw new Error("Invalid dateRange");
+  }
+};
+
+const buildAccessFilter = (user) => {
+  if (!user) return { _id: null };
+
+  const userId = user._id;
+
+  const userTeamIds = (user.team || [])
+    .map((t) => new mongoose.Types.ObjectId(t.id || t._id))
+    .filter(Boolean);
+
+  const userRoleIds = (user.role || [])
+    .map(
+      (r) =>
+        new mongoose.Types.ObjectId(typeof r === "object" ? r.id || r._id : r),
+    )
+    .filter(Boolean);
+
+  const accessConditions = {
+    $or: [
+      { owner: userId },
+      { "privacy.users": userId },
+      { "privacy.teams": { $in: userTeamIds } },
+      { "privacy.roles": { $in: userRoleIds } },
+    ],
+  };
+
+  return {
+    $or: [
+      // PUBLIC DOCUMENTS
+      { "permissionOverrides.restricted": 0 },
+
+      // RESTRICTED DOCUMENTS
+      {
+        $and: [
+          { "permissionOverrides.restricted": 1 },
+          {
+            $or: [
+              accessConditions,
+
+              // fallback: treat empty privacy as public (optional rule)
+              {
+                $and: [
+                  { "privacy.users.0": { $exists: false } },
+                  { "privacy.teams.0": { $exists: false } },
+                  { "privacy.roles.0": { $exists: false } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+};
+
+const normalizeFileTypeId = (fileType) => {
+  if (!fileType) return null;
+
+  const id =
+    typeof fileType === "object" && fileType.id
+      ? fileType.id.toString()
+      : fileType.toString();
+
+  return mongoose.isValidObjectId(id) ? id : null;
+};
+
+const mapFileTypes = (documents, fileTypesMap) =>
+  documents.map((doc) => {
+    if (doc.type !== "file" || !doc.metadata?.fileType) return doc;
+
+    const id = normalizeFileTypeId(doc.metadata.fileType);
+
+    doc.metadata.fileType = {
+      id,
+      name: id && fileTypesMap[id] ? fileTypesMap[id].name : "",
+    };
+
+    return doc;
+  });
+
+const logRecentAccess = async (userId, documentId, type) => {
+  if (!userId) return;
+
+  try {
+    const existing = await RecentDocs.findOne({ userId, documentId });
+
+    if (existing) {
+      existing.accessedAt = new Date();
+      existing.count += 1;
+      existing.documentType = type;
+      return existing.save();
+    }
+
+    return new RecentDocs({
+      userId,
+      documentId,
+      documentType: type,
+      accessedAt: new Date(),
+      count: 1,
+    }).save();
+  } catch (err) {
+    console.error("RecentDocs log failed:", err);
+  }
+};
+
 const getDocuments = async (req, res) => {
   try {
     const {
@@ -382,153 +556,42 @@ const getDocuments = async (req, res) => {
       endDate,
     } = req.query;
 
-    console.log("Received keyword:", keyword);
-    console.log("Received folder:", folder);
-    console.log("Received type:", type);
-    console.log("Full query params:", req.query);
+    const accessFilter = buildAccessFilter(req.user);
 
-    // Build the filter object
-    let filter = { deletedAt: null };
+    const baseFilter = {
+      deletedAt: null,
+      ...buildDateFilter(dateRange, startDate, endDate),
+      ...(type && { type }),
+
+      $and: [
+        accessFilter,
+
+        folder
+          ? { parentId: new mongoose.Types.ObjectId(folder) }
+          : keyword?.trim()
+            ? {
+                $or: [
+                  { title: { $regex: keyword, $options: "i" } },
+                  { description: { $regex: keyword, $options: "i" } },
+                  {
+                    "metadata.fileName": {
+                      $regex: keyword,
+                      $options: "i",
+                    },
+                  },
+                ],
+              }
+            : { parentId: null },
+      ],
+    };
+
     let folderInfo = null;
 
-    // Handle date range filtering
-    if (dateRange) {
-      console.log("Date range filter applied:", dateRange);
-      let dateFilter = {};
-      const now = new Date();
-
-      switch (dateRange) {
-        case "today":
-          const startOfToday = new Date();
-          startOfToday.setHours(0, 0, 0, 0);
-          const endOfToday = new Date();
-          endOfToday.setHours(23, 59, 59, 999);
-          dateFilter = {
-            createdAt: {
-              $gte: startOfToday,
-              $lte: endOfToday,
-            },
-          };
-          console.log("Today range:", { startOfToday, endOfToday });
-          break;
-
-        case "last7days":
-          const last7Days = new Date();
-          last7Days.setDate(last7Days.getDate() - 7);
-          last7Days.setHours(0, 0, 0, 0);
-          dateFilter = {
-            createdAt: { $gte: last7Days },
-          };
-          console.log("Last 7 days range from:", last7Days);
-          break;
-
-        case "last30days":
-          const last30Days = new Date();
-          last30Days.setDate(last30Days.getDate() - 30);
-          last30Days.setHours(0, 0, 0, 0);
-          dateFilter = {
-            createdAt: { $gte: last30Days },
-          };
-          console.log("Last 30 days range from:", last30Days);
-          break;
-
-        case "thisYear":
-          const startOfYear = new Date(
-            new Date().getFullYear(),
-            0,
-            1,
-            0,
-            0,
-            0,
-            0,
-          );
-          dateFilter = {
-            createdAt: { $gte: startOfYear },
-          };
-          console.log("This year range from:", startOfYear);
-          break;
-
-        case "lastYear":
-          const currentYear = new Date().getFullYear();
-          const startOfLastYear = new Date(currentYear - 1, 0, 1, 0, 0, 0, 0);
-          const endOfLastYear = new Date(
-            currentYear - 1,
-            11,
-            31,
-            23,
-            59,
-            59,
-            999,
-          );
-          dateFilter = {
-            createdAt: {
-              $gte: startOfLastYear,
-              $lte: endOfLastYear,
-            },
-          };
-          console.log("Last year range:", { startOfLastYear, endOfLastYear });
-          break;
-
-        case "custom":
-          console.log("Custom date range requested:", { startDate, endDate });
-          if (!startDate || !endDate) {
-            return res.status(400).json({
-              success: false,
-              message:
-                "startDate and endDate are required for custom date range",
-            });
-          }
-
-          const customStart = new Date(startDate);
-          const customEnd = new Date(endDate);
-
-          if (isNaN(customStart.getTime()) || isNaN(customEnd.getTime())) {
-            return res.status(400).json({
-              success: false,
-              message: "Invalid date format. Use YYYY-MM-DD format",
-            });
-          }
-
-          if (customStart > customEnd) {
-            return res.status(400).json({
-              success: false,
-              message: "startDate must be before or equal to endDate",
-            });
-          }
-
-          customStart.setHours(0, 0, 0, 0);
-          customEnd.setHours(23, 59, 59, 999);
-
-          dateFilter = {
-            createdAt: {
-              $gte: customStart,
-              $lte: customEnd,
-            },
-          };
-          console.log("Custom range applied:", { customStart, customEnd });
-          break;
-
-        default:
-          return res.status(400).json({
-            success: false,
-            message:
-              "Invalid dateRange. Use: today, last7days, last30days, thisYear, lastYear, or custom",
-          });
-      }
-
-      // Merge date filter with main filter
-      filter = { ...filter, ...dateFilter };
-      console.log("Date filter applied:", dateFilter);
-    }
-
-    // Filter by type if provided
-    if (type) {
-      filter.type = type;
-    }
-
     if (folder) {
-      // If folder is provided, get folder information
-      folderInfo = await Document.findOne({ _id: folder, deletedAt: null })
+      folderInfo = await Document.findOne({
+        _id: folder,
+        deletedAt: null,
+      })
         .populate("owner", "firstName lastName email")
         .populate("privacy.users", "firstName lastName email")
         .populate("privacy.teams", "name")
@@ -542,197 +605,75 @@ const getDocuments = async (req, res) => {
         });
       }
 
-      // Log folder access in recent documents
-      const userId = req.user?._id || req.user?.id;
-      if (userId) {
-        try {
-          const existingRecord = await RecentDocs.findOne({
-            userId,
-            documentId: folder,
-          });
-
-          if (existingRecord) {
-            existingRecord.accessedAt = new Date();
-            existingRecord.count += 1;
-            existingRecord.documentType = folderInfo.type;
-            await existingRecord.save();
-          } else {
-            const newRecord = new RecentDocs({
-              userId,
-              documentId: folder,
-              documentType: folderInfo.type,
-              accessedAt: new Date(),
-              count: 1,
-            });
-            await newRecord.save();
-          }
-        } catch (logError) {
-          console.error("Error logging document access:", logError);
-          // Don't fail the request if logging fails
-        }
-      }
-
-      // Filter by parentId
-      filter.parentId = folder;
-    } else if (keyword && keyword.trim() !== "") {
-      // If keyword is provided, search in title, description, and owner fields
-      filter.$or = [
-        { title: { $regex: keyword.trim(), $options: "i" } },
-        { description: { $regex: keyword.trim(), $options: "i" } },
-        { "metadata.fileName": { $regex: keyword.trim(), $options: "i" } },
-      ];
-    } else {
-      // If no keyword or folder, filter by parentId: null
-      filter.parentId = null;
+      await logRecentAccess(req.user?._id, folder, folderInfo.type);
     }
 
-    console.log("Final filter before query:", JSON.stringify(filter, null, 2));
-    console.log("Filter being used:", JSON.stringify(filter, null, 2));
-
-    // Build sort object - folders first, then by specified field
-    const sortDirection = sortOrder === "desc" ? -1 : 1;
-    const sortOptions = [
-      { type: 1 }, // Always sort by type first (folder comes before file alphabetically)
-      { [sortBy]: sortDirection }, // Then sort by specified field
-    ];
-
-    // Find documents with all fields
-    let documents = await Document.find(filter)
+    let documents = await Document.find(baseFilter)
       .populate("owner", "firstName lastName email")
       .populate("privacy.users", "firstName lastName email")
       .populate("privacy.teams", "name")
       .populate("privacy.roles", "title")
       .lean();
 
-    // Sort documents: folders first, then apply custom sort
+    // SORT (folders first)
+    const sortDir = sortOrder === "desc" ? -1 : 1;
+
     documents.sort((a, b) => {
-      // First, ensure folders come first
       if (a.type === "folder" && b.type !== "folder") return -1;
       if (a.type !== "folder" && b.type === "folder") return 1;
 
-      // Then sort by the specified field
-      const aValue = a[sortBy];
-      const bValue = b[sortBy];
-
-      if (aValue < bValue) return sortDirection;
-      if (aValue > bValue) return -sortDirection;
-      return 0;
+      return a[sortBy] < b[sortBy] ? sortDir : -sortDir;
     });
 
-    // Collect unique fileType IDs from file documents
+    // FILE TYPE ENRICHMENT
     const fileTypeIds = [
       ...new Set(
         documents
-          .filter((doc) => doc.type === "file" && doc.metadata?.fileType)
-          .map((doc) => {
-            const fileType = doc.metadata.fileType;
-            let id;
-
-            // Check if it's already an object with id property
-            if (typeof fileType === "object" && fileType.id) {
-              id = fileType.id.toString();
-            } else {
-              id = fileType.toString();
-            }
-
-            // Validate ObjectId format
-            return mongoose.Types.ObjectId.isValid(id) ? id : null;
-          })
-          .filter((id) => id !== null), // Remove invalid IDs
+          .map((d) => d.metadata?.fileType)
+          .filter(Boolean)
+          .map((id) =>
+            new mongoose.isValidObjectId(id) ? id.toString() : null,
+          )
+          .filter(Boolean),
       ),
     ];
 
-    // Fetch all fileTypes in one query
-    let fileTypesMap = {};
-    if (fileTypeIds.length > 0) {
-      const fileTypes = await FileType.find({ _id: { $in: fileTypeIds } })
-        .select("_id name")
-        .lean();
+    const fileTypes = await FileType.find({
+      _id: { $in: fileTypeIds },
+    })
+      .select("_id name")
+      .lean();
 
-      fileTypes.forEach((ft) => {
-        fileTypesMap[ft._id.toString()] = ft;
-      });
-    }
+    const fileTypeMap = Object.fromEntries(
+      fileTypes.map((ft) => [ft._id.toString(), ft]),
+    );
 
-    // Transform fileType for file documents
     documents = documents.map((doc) => {
       if (doc.type === "file" && doc.metadata?.fileType) {
-        const fileType = doc.metadata.fileType;
-        let fileTypeId;
+        const id = doc.metadata.fileType?.toString?.();
 
-        // Check if it's already an object with id property
-        if (typeof fileType === "object" && fileType.id) {
-          fileTypeId = fileType.id.toString();
-        } else {
-          fileTypeId = fileType.toString();
-        }
-
-        // Only transform if it's a valid ObjectId
-        if (mongoose.Types.ObjectId.isValid(fileTypeId)) {
-          const fileTypeData = fileTypesMap[fileTypeId];
-
-          if (fileTypeData) {
-            doc.metadata.fileType = {
-              id: fileTypeData._id,
-              name: fileTypeData.name || "",
-            };
-          } else {
-            doc.metadata.fileType = {
-              id: fileTypeId,
-              name: "",
-            };
-          }
-        } else {
-          // If invalid, set to null or empty object
-          doc.metadata.fileType = {
-            id: null,
-            name: "",
-          };
-        }
+        doc.metadata.fileType = {
+          id,
+          name: fileTypeMap[id]?.name || "",
+        };
       }
       return doc;
     });
 
-    // Prepare response data
-    const responseData = {
-      documents,
-      ...(folderInfo && { folder: folderInfo }),
-    };
-
-    // If folder is provided, fetch parent information
-    let parentData = null;
-    if (folderInfo && folderInfo.parentId) {
-      const parent = await Document.findOne({
-        _id: folderInfo.parentId,
-        deletedAt: null,
-      })
-        .select("_id title parentId")
-        .lean();
-
-      if (parent) {
-        parentData = {
-          id: parent._id,
-          title: parent.title,
-          parentId: parent.parentId || null,
-        };
-        // Replace parentId with parentData in folderInfo
-        folderInfo.parentData = parentData;
-        delete folderInfo.parentId;
-      }
-    }
-
     return res.status(200).json({
       success: true,
       message: "Documents retrieved successfully",
-      data: responseData,
+      data: {
+        documents,
+        ...(folderInfo && { folder: folderInfo }),
+      },
     });
   } catch (error) {
-    console.error("Error in getDocuments:", error);
+    console.error("getDocuments error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Failed to retrieve documents",
-      error: error.message,
+      message: error.message || "Failed to retrieve documents",
     });
   }
 };
@@ -908,7 +849,7 @@ const getDocument = async (req, res) => {
               }
 
               // Validate ObjectId format
-              return mongoose.Types.ObjectId.isValid(id) ? id : null;
+              return mongoose.isValidObjectId(id) ? id : null;
             })
             .filter((id) => id !== null), // Remove invalid IDs
         ),
