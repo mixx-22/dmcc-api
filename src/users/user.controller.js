@@ -88,6 +88,116 @@ const getPermissionsFromRoles = async (role) => {
   return rolePermissions;
 };
 
+const adminPermissionValue = { c: 1, r: 1, u: 1, d: 1 };
+
+const systemAdministratorPermissions = {
+  users: { ...adminPermissionValue },
+  teams: {
+    ...adminPermissionValue,
+    permission: {
+      objective: { ...adminPermissionValue },
+    },
+  },
+  document: {
+    ...adminPermissionValue,
+    permission: {
+      archive: { ...adminPermissionValue },
+      download: { ...adminPermissionValue },
+      preview: { ...adminPermissionValue },
+    },
+  },
+  documents: {
+    ...adminPermissionValue,
+    permission: {
+      download: { ...adminPermissionValue },
+      preview: { ...adminPermissionValue },
+    },
+  },
+  request: {
+    ...adminPermissionValue,
+    permission: {
+      publish: { ...adminPermissionValue },
+      approval: { ...adminPermissionValue },
+    },
+  },
+  audit: {
+    ...adminPermissionValue,
+    permission: {
+      schedule: { ...adminPermissionValue },
+      findings: { ...adminPermissionValue },
+      response: { ...adminPermissionValue },
+      organizations: { ...adminPermissionValue },
+      kpis: { ...adminPermissionValue },
+      verify: { ...adminPermissionValue },
+    },
+  },
+  settings: {
+    ...adminPermissionValue,
+    permission: {
+      roles: { ...adminPermissionValue },
+      fileType: { ...adminPermissionValue },
+    },
+  },
+};
+
+const seedSystemAdministratorIfUsersEmpty = async () => {
+  const userCount = await User.countDocuments({});
+  if (userCount > 0) return null;
+
+  const username = process.env.SYSTEM_ADMIN_USERNAME || "admin";
+  const password = process.env.SYSTEM_ADMIN_PASSWORD || "Admin@123456";
+  const email = process.env.SYSTEM_ADMIN_EMAIL || "admin@auptilyze.local";
+  const employeeId = process.env.SYSTEM_ADMIN_EMPLOYEE_ID || "SYS-ADMIN-001";
+
+  let role = await Role.findOne({ title: "System Administrator" });
+  if (!role) {
+    role = await Role.create({
+      title: "System Administrator",
+      description: "Full system access account role",
+      permissions: systemAdministratorPermissions,
+      isSystemRole: true,
+      roleTypes: ["admin"],
+    });
+  } else {
+    role.permissions = systemAdministratorPermissions;
+    role.isSystemRole = true;
+    role.roleTypes = Array.from(new Set([...(role.roleTypes || []), "admin"]));
+    role.markModified("permissions");
+    await role.save();
+  }
+
+  try {
+    const user = await User.create({
+      employeeId,
+      position: "System Administrator",
+      firstName: "System",
+      middleName: "",
+      lastName: "Administrator",
+      username,
+      password,
+      contactNumber: "",
+      email: email.toLowerCase(),
+      role: [role._id],
+      team: [],
+      permissionsOverride: systemAdministratorPermissions,
+      isActive: true,
+      deletedAt: null,
+    });
+
+    user.markModified("permissionsOverride");
+    await user.save();
+
+    return user;
+  } catch (error) {
+    if (error?.code === 11000) {
+      return User.findOne({
+        $or: [{ username }, { email: email.toLowerCase() }, { employeeId }],
+      });
+    }
+    throw error;
+  }
+};
+
 const registerUser = async (req, res) => {
   try {
     console.log("registerUser body:", req.body);
@@ -885,6 +995,8 @@ const deleteUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
+    await seedSystemAdministratorIfUsersEmpty();
+
     const { usernameOrEmail, username, email, password } = req.body ?? {};
 
     const identifier = usernameOrEmail ?? username ?? email;
